@@ -1,0 +1,17 @@
+# Hardened torrc for CipherNode Onion Hidden Service
+# Launched by: ./tor/start_tor.sh
+
+# ─── Connection Settings ───────────────────────────────────────────────
+SocksPort 0                     # Disable client SOCKS (server-only mode)
+ControlPort 0                   # Disable control port (no external access)
+
+# ─── Security Hardening ────────────────────────────────────────────────
+AvoidDiskWrites 1               # Minimise disk I/O to protect ephemeral keys
+SafeLogging 1                   # Scrub client IP addresses from all Tor logs
+Log notice stdout               # Print bootstrap progress to terminal
+
+# ─── Onion Hidden Service V3 ───────────────────────────────────────────
+# HiddenServiceDir is set dynamically by start_tor.sh via --HiddenServiceDir
+# This avoids hardcoded absolute paths in the config.
+HiddenServicePort 80 127.0.0.1:3001
+HiddenServiceVersion 3

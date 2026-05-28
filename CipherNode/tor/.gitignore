@@ -1,0 +1,3 @@
+# CipherNode Tor Hidden Service secrets
+# These contain your .onion private keys — NEVER commit these
+onion_service/

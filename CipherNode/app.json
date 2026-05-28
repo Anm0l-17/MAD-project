@@ -1,0 +1,27 @@
+{
+    "expo": {
+        "name": "CipherNode",
+        "slug": "ciphernode",
+        "version": "1.0.0",
+        "sdkVersion": "54.0.0",
+        "orientation": "portrait",
+        "icon": "./assets/icon.png",
+        "userInterfaceStyle": "dark",
+        "splash": {
+            "backgroundColor": "#000000"
+        },
+        "ios": {
+            "supportsTablet": false,
+            "bundleIdentifier": "com.ciphernode.app"
+        },
+        "android": {
+            "adaptiveIcon": {
+                "backgroundColor": "#000000"
+            },
+            "package": "com.ciphernode.app"
+        },
+        "plugins": [
+            "expo-local-authentication"
+        ]
+    }
+}
