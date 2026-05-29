@@ -54,12 +54,13 @@ object TorManager {
         synchronized(lock) {
             if (torProcess != null) return
             try {
-                val torDir = File(context.filesDir, "tor")
+                val torBaseDir = context.filesDir
+                val torDir = File(torBaseDir, "tor")
                 torDir.mkdirs()
 
-                TorResourceInstaller(context, torDir).installResources()
+                TorResourceInstaller(context, torBaseDir).installResources()
 
-                val torBinary = findTorBinary(torDir)
+                val torBinary = findTorBinary(torBaseDir)
                 if (torBinary == null) {
                     updateStatus(
                         statusRef.get().copy(
