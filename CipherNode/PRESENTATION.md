@@ -4,9 +4,9 @@
 CipherNode is designed as a **Peer-to-Peer (P2P)** messenger that doesn't require a central database of messages. Instead, it uses a **Relay Server** that acts as a "blind postman"—it moves messages between phones but cannot read them.
 
 ### 2. Connection to "Onion Services"
-While the app currently runs over standard internet protocols (WebSockets) for performance, it uses the **logic of Onion Routing**:
+While the app currently runs over standard internet protocols (WebSockets) for performance, **production APK builds route traffic through an embedded Tor runtime** using the logic of Onion Routing:
 *   **Identity as Address**: Every phone generates a unique `Node ID` (e.g., `5f3e...8a9b.onion`). This isn't just a username; it’s a cryptographic fingerprint of the device.
-*   **Anonymity**: In a full production environment, the Socket.io traffic would be routed through the **Tor Network**, making the physical location (IP address) of the phones impossible to trace.
+*   **Anonymity**: In production APK builds, Socket.io traffic is routed through the **Tor Network**, making the physical location (IP address) of the phones impossible to trace.
 
 ### 3. How 2 Phones Communicate (The Handshake)
 Communication is established through a **Physical Handshake (QR Discovery)**:

@@ -6,7 +6,14 @@ import {
 } from 'react-native';
 import { colors } from '../theme';
 import { MY_NODE } from '../data/mockData';
-import { getRelayUrl, setRelayUrl, connectSocket, DEFAULT_SERVER_URL } from '../utils/socket';
+import {
+    getRelayUrl,
+    setRelayUrl,
+    connectSocket,
+    DEFAULT_SERVER_URL,
+    isRelayUrlAllowed,
+} from '../utils/socket';
+import { getTorStatus, subscribeTorStatus, startTor } from '../utils/tor';
 
 export default function SettingsScreen({ navigation }) {
     const [burnEnabled, setBurnEnabled] = useState(true);
@@ -15,17 +22,31 @@ export default function SettingsScreen({ navigation }) {
     
     const [relayInput, setRelayInput] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const [torStatus, setTorStatus] = useState(null);
 
     useEffect(() => {
         getRelayUrl().then(url => setRelayInput(url));
+        getTorStatus().then(status => setTorStatus(status));
+        startTor().then(status => setTorStatus(status));
+        const unsubscribe = subscribeTorStatus(setTorStatus);
+        return () => unsubscribe();
     }, []);
 
     const handleSaveRelay = async () => {
         setIsSaving(true);
-        await setRelayUrl(relayInput || DEFAULT_SERVER_URL);
-        await connectSocket(); // Reconnect immediately with new URL
-        setIsSaving(false);
-        Alert.alert('Saved', 'Relay Server URL updated and reconnected.');
+        try {
+            const nextUrl = relayInput || DEFAULT_SERVER_URL;
+            if (!isRelayUrlAllowed(nextUrl)) {
+                throw new Error('Relay URL must be a .onion address in release builds.');
+            }
+            await setRelayUrl(nextUrl);
+            await connectSocket(); // Reconnect immediately with new URL
+            Alert.alert('Saved', 'Relay Server URL updated and reconnected.');
+        } catch (e) {
+            Alert.alert('Relay URL rejected', e?.message || 'Unable to save relay URL.');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const SettingRow = ({ icon, iconBg, label, value, children }) => (
@@ -64,7 +85,7 @@ export default function SettingsScreen({ navigation }) {
                 <Text style={styles.groupLabel}>NETWORK & RELAY</Text>
                 <View style={styles.card}>
                     <View style={styles.inputRow}>
-                        <Text style={styles.inputLabel}>Relay Server URL (Orbot/Tor/IP)</Text>
+                        <Text style={styles.inputLabel}>Relay Server URL (.onion for release)</Text>
                         <TextInput
                             style={styles.textInput}
                             value={relayInput}
@@ -82,6 +103,23 @@ export default function SettingsScreen({ navigation }) {
                             <Text style={styles.saveBtnText}>{isSaving ? 'Saving...' : 'Save & Reconnect'}</Text>
                         </TouchableOpacity>
                     </View>
+                    <View style={styles.separator} />
+                    <SettingRow
+                        icon="🧅"
+                        iconBg={colors.surface3}
+                        label="Tor Runtime"
+                        value={
+                            torStatus?.bootstrapped
+                                ? 'Bootstrapped'
+                                : torStatus?.running
+                                    ? `Starting (${torStatus?.progress || 0}%)`
+                                    : 'Stopped'
+                        }
+                    >
+                        <Text style={styles.chevron}>
+                            {torStatus?.bootstrapped ? '✓' : torStatus?.running ? '…' : '!'}
+                        </Text>
+                    </SettingRow>
                     <View style={styles.separator} />
                     <SettingRow icon="♾️" iconBg={colors.surface3} label="Circuit Rotation" value="Every 10 min">
                         <Text style={styles.chevron}>›</Text>
