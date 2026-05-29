@@ -20,12 +20,13 @@ export const encryptMessage = (message, key = SHARED_KEY) => {
 // Processes every character regardless of any mismatch (length or value) to avoid
 // leaking information through execution time.
 function timingSafeEqual(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
     const len = Math.max(a.length, b.length);
     // Seed diff with the length delta so different-length strings never compare equal.
     let diff = a.length ^ b.length;
     for (let i = 0; i < len; i++) {
-        // charCodeAt returns NaN for out-of-bounds indices; the bitwise OR coerces
-        // NaN to 0, keeping the loop running without an early exit.
+        // charCodeAt returns NaN for out-of-bounds indices; the `|| 0` coerces
+        // NaN to 0 so the loop runs to completion without an early exit.
         diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
     }
     return diff === 0;
