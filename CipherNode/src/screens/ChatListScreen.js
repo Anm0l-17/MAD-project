@@ -1,5 +1,5 @@
 // src/screens/ChatListScreen.js
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
     View, Text, FlatList, TouchableOpacity,
     StyleSheet, StatusBar,
@@ -7,6 +7,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { CONTACTS, INITIAL_MESSAGES, MY_NODE } from '../data/mockData';
 import { isTorActive } from '../utils/socket';
+import { subscribeTorStatus } from '../utils/tor';
 import { colors } from '../theme';
 
 function formatTime(ts) {
@@ -69,6 +70,11 @@ export default function ChatListScreen({ navigation }) {
             setTorConnected(isTorActive());
         }, [])
     );
+
+    useEffect(() => {
+        const unsubscribe = subscribeTorStatus(status => setTorConnected(Boolean(status.bootstrapped)));
+        return () => unsubscribe();
+    }, []);
 
     const getLastMsg = (contactId) => {
         const msgs = messages[contactId] || [];

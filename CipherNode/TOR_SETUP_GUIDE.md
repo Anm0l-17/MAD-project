@@ -10,9 +10,9 @@ This guide covers deploying CipherNode with a **native Tor Onion Hidden Service*
 |---|---|---|
 | **Node.js** | `brew install node` | Runs the relay server |
 | **Tor** | `brew install tor` | Creates the Onion Hidden Service |
-| **Expo CLI** | `npm install -g expo-cli` | Builds & serves the mobile app |
-| **Orbot** (phones) | App Store / Play Store | Routes phone traffic through Tor |
-| **Expo Go** (phones) | App Store / Play Store | Runs the React Native app |
+| **Expo CLI** | `npm install -g expo-cli` | Builds & serves the mobile app (dev only) |
+| **Orbot** (phones) | App Store / Play Store | Optional for Expo dev (APK release embeds Tor) |
+| **Expo Go** (phones) | App Store / Play Store | Runs the React Native app (dev only) |
 
 ---
 
@@ -70,7 +70,7 @@ The relay is now accessible **only** through your `.onion` address via the Tor n
 
 ---
 
-## Phase 3: Start the Expo App
+## Phase 3A: Start the Expo App (Development Only)
 
 Open a **third terminal**:
 
@@ -83,9 +83,35 @@ A QR code will appear. Both phones scan this to load the app.
 
 ---
 
+## Phase 3B: Build the APK (Production / Embedded Tor)
+
+The release APK ships with an **embedded Tor runtime** (no Orbot/VPN required).
+
+```bash
+cd CipherNode
+
+# Generate native Android project (one-time)
+npx expo prebuild --platform android
+
+# Build release APK
+cd android
+./gradlew assembleRelease
+```
+
+Install the APK from `android/app/build/outputs/apk/release/` on each phone.
+
+---
+
 ## Phase 4: Configure Phones
 
-### On Both Phones:
+### On Both Phones (APK Release):
+
+1. Install the APK on both devices.
+2. Open the app and wait for **“Tor Circuit Active”** in the header.
+3. Go to **Settings → Relay Server URL** and enter your `.onion` address.
+4. Tap **Save & Reconnect**.
+
+### On Both Phones (Expo Dev):
 
 1. **Install Orbot** and **Expo Go** from the app store.
 
@@ -115,9 +141,9 @@ A QR code will appear. Both phones scan this to load the app.
 
 ### Traffic Flow (Full Anonymity)
 ```
-Phone 1 → Orbot/Tor → [Guard] → [Middle] → [Exit] → .onion → Relay Server
+Phone 1 → Embedded Tor → [Guard] → [Middle] → [Exit] → .onion → Relay Server
                                                                     ↓
-Phone 2 ← Orbot/Tor ← [Guard] ← [Middle] ← [Exit] ← .onion ← Relay Server
+Phone 2 ← Embedded Tor ← [Guard] ← [Middle] ← [Exit] ← .onion ← Relay Server
 ```
 
 **Zero parties** (including the relay server operator) can read message content. The relay only sees encrypted ciphertext and anonymous Tor circuit IDs.
@@ -147,6 +173,16 @@ Phone 2 ← Orbot/Tor ← [Guard] ← [Middle] ← [Exit] ← .onion ← Relay S
 |---|---|
 | `tor: command not found` | Run `brew install tor` |
 | Hostname not generating | Check firewall settings; Tor needs outbound access |
-| App shows "Tor Disconnected" | Ensure Orbot is running with Expo Go selected in VPN mode |
-| Can't reach .onion from phone | Verify Orbot shows "Bootstrapped 100%" |
+| App shows "Tor Disconnected" | For APK: keep the Tor notification running and wait for bootstrap; for Expo: ensure Orbot VPN is active for Expo Go |
+| Can't reach .onion from phone | For APK: wait for embedded Tor bootstrap; for Expo: verify Orbot shows "Bootstrapped 100%" |
 | `BIND_HOST` confusion | Default is `127.0.0.1` (production). Use `0.0.0.0` only for local dev/testing |
+
+---
+
+## Release Validation Checklist
+
+- [ ] Tor foreground service starts and stays active after app background/foreground.
+- [ ] Header shows **“Tor Circuit Active”** within 60 seconds.
+- [ ] Relay URL is a `.onion` address (non-onion URLs are rejected in release).
+- [ ] No direct IP traffic visible during connection attempts.
+- [ ] Reconnect works after toggling airplane mode or switching networks.

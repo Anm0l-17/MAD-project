@@ -2,18 +2,32 @@
 // Singleton Socket.io client — connect once, share everywhere
 import { io } from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ensureTorReady, subscribeTorStatus } from './tor';
 
 const SERVER_URL_KEY = '@cipher_relay_url';
-export const DEFAULT_SERVER_URL = 'http://192.168.131.1:3001';
-const SOCKS5_PROXY_PORT = 9050; // Standard Tor client proxy port
+const DEV_DEFAULT_SERVER_URL = 'http://192.168.131.1:3001';
+export const DEFAULT_SERVER_URL = __DEV__
+    ? DEV_DEFAULT_SERVER_URL
+    : 'http://your-onion-address.onion';
 
 let _socket = null;
 let _torActive = false;
+let _torStatus = {
+    running: false,
+    bootstrapped: false,
+    progress: 0,
+    status: '',
+    socksPort: 9050,
+    lastError: null,
+};
+let _torListenerInitialized = false;
 
 export async function getRelayUrl() {
     try {
         const url = await AsyncStorage.getItem(SERVER_URL_KEY);
-        return url || DEFAULT_SERVER_URL;
+        if (!url) return DEFAULT_SERVER_URL;
+        if (!isRelayUrlAllowed(url)) return DEFAULT_SERVER_URL;
+        return url;
     } catch {
         return DEFAULT_SERVER_URL;
     }
@@ -21,9 +35,16 @@ export async function getRelayUrl() {
 
 export async function setRelayUrl(url) {
     try {
-        await AsyncStorage.setItem(SERVER_URL_KEY, url.trim() || DEFAULT_SERVER_URL);
+        const trimmed = (url || '').trim();
+        const nextUrl = trimmed || DEFAULT_SERVER_URL;
+        if (!isRelayUrlAllowed(nextUrl)) {
+            throw new Error('Relay URL must be a .onion address in release builds.');
+        }
+        await AsyncStorage.setItem(SERVER_URL_KEY, nextUrl);
+        return nextUrl;
     } catch (e) {
         console.warn('Failed to save relay URL', e);
+        throw e;
     }
 }
 
@@ -38,24 +59,39 @@ export function isTorActive() {
     return _torActive;
 }
 
-// Fail-Closed SOCKS5 connection check
-async function verifyTorProxy() {
+export function getTorStatus() {
+    return _torStatus;
+}
+
+function isOnionUrl(url) {
     try {
-        // Ping local SOCKS5 proxy port to confirm Tor/Orbot is active
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-        
-        const response = await fetch(`http://127.0.0.1:${SOCKS5_PROXY_PORT}`, {
-            method: 'HEAD',
-            mode: 'no-cors',
-            signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        return true;
-    } catch (e) {
-        console.warn('[Tor Security] SOCKS5 connection refused on port', SOCKS5_PROXY_PORT, '. Fail-closed triggered.');
+        const parsed = new URL(url);
+        return parsed.hostname.endsWith('.onion');
+    } catch {
         return false;
     }
+}
+
+export function isRelayUrlAllowed(url) {
+    if (__DEV__) return true;
+    return isOnionUrl(url);
+}
+
+function ensureTorListener() {
+    if (_torListenerInitialized) return;
+    _torListenerInitialized = true;
+    subscribeTorStatus((status) => {
+        _torStatus = status;
+        _torActive = status.bootstrapped;
+    });
+}
+
+async function ensureTorReadyForConnection() {
+    ensureTorListener();
+    const status = await ensureTorReady({ timeoutMs: 45000 });
+    _torStatus = status;
+    _torActive = status.bootstrapped;
+    return status;
 }
 
 export async function connectSocket() {
@@ -63,16 +99,19 @@ export async function connectSocket() {
         _socket.disconnect();
     }
     
-    // Fail-Closed Guard check
-    const torRunning = await verifyTorProxy();
-    if (!torRunning) {
+    // Fail-Closed Guard check (Tor must be bootstrapped for release builds)
+    const torStatus = await ensureTorReadyForConnection();
+    if (!torStatus.bootstrapped) {
         _torActive = false;
-        console.error('[Tor Security Check] FAILED. Connection aborted to prevent IP leakage.');
+        console.error('[Tor Security Check] Tor bootstrap not complete. Connection aborted to prevent IP leakage.');
+        if (!__DEV__) return null;
+    }
+
+    const url = await getRelayUrl();
+    if (!isRelayUrlAllowed(url)) {
+        console.error('[Tor Security Check] Relay URL rejected. Use a .onion address in release builds.');
         return null;
     }
-    
-    _torActive = true;
-    const url = await getRelayUrl();
     
     _socket = io(url, {
         transports: ['websocket'],
