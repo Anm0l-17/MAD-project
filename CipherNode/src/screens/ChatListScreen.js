@@ -61,6 +61,7 @@ function ContactRow({ contact, lastMsg, onPress }) {
 }
 
 export default function ChatListScreen({ navigation }) {
+    const accentColor = colors.cobalt;
     const [messages, setMessages] = useState(INITIAL_MESSAGES);
     const [torConnected, setTorConnected] = useState(isTorActive());
 
@@ -111,9 +112,7 @@ export default function ChatListScreen({ navigation }) {
             </View>
 
             {/* Section label */}
-            <Text style={styles.sectionLabel}>
-                ACTIVE NODES
-            </Text>
+            <Text style={styles.sectionLabel}>ACTIVE NODES</Text>
 
             <FlatList
                 data={CONTACTS}

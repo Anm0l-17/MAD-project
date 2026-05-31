@@ -13,5 +13,7 @@ Log notice stdout               # Print bootstrap progress to terminal
 # ─── Onion Hidden Service V3 ───────────────────────────────────────────
 # HiddenServiceDir is set dynamically by start_tor.sh via --HiddenServiceDir
 # This avoids hardcoded absolute paths in the config.
+# —— Onion Hidden Service V3 ————————————————————————————
+HiddenServiceDir /Users/anmolkumar/MAD/MAD-project/CipherNode/tor/onion_service
 HiddenServicePort 80 127.0.0.1:3001
 HiddenServiceVersion 3
