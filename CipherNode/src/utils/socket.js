@@ -81,30 +81,37 @@ function ensureTorListener() {
     if (_torListenerInitialized) return;
     _torListenerInitialized = true;
     subscribeTorStatus((status) => {
+        const previouslyActive = _torActive;
         _torStatus = status;
         _torActive = status.bootstrapped;
+        
+        // If Tor finishes bootstrapping in the background, autoconnect the socket!
+        if (status.bootstrapped && !previouslyActive) {
+            console.log('[Socket] Tor bootstrap complete. Establishing relay connection...');
+            connectSocket().catch(e => console.warn('[Socket] Auto-connect failed:', e));
+        }
     });
 }
 
-async function ensureTorReadyForConnection() {
-    ensureTorListener();
-    const status = await ensureTorReady({ timeoutMs: 45000 });
-    _torStatus = status;
-    _torActive = status.bootstrapped;
-    return status;
-}
-
 export async function connectSocket() {
+    ensureTorListener();
+
     if (_socket) {
+        if (_socket.connected) return _socket;
         _socket.disconnect();
     }
     
     // Fail-Closed Guard check (Tor must be bootstrapped for release builds)
-    const torStatus = await ensureTorReadyForConnection();
-    if (!torStatus.bootstrapped) {
-        _torActive = false;
-        console.error('[Tor Security Check] Tor bootstrap not complete. Connection aborted to prevent IP leakage.');
-        if (!__DEV__) return null;
+    // Check current status in a non-blocking manner
+    const status = _torStatus.running ? _torStatus : await getTorStatus();
+    _torStatus = status;
+    _torActive = status.bootstrapped;
+
+    if (!status.bootstrapped) {
+        if (!__DEV__) {
+            console.log('[Tor Security Check] Tor bootstrap in progress. Deferring connection to prevent IP leakage.');
+            return null;
+        }
     }
 
     const url = await getRelayUrl();
@@ -141,3 +148,4 @@ export function disconnectSocket() {
         _torActive = false;
     }
 }
+

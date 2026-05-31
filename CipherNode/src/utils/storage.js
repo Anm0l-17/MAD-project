@@ -44,6 +44,47 @@ export const getMessages = async (contactId) => {
     return all[contactId] || [];
 };
 
+export const appendMessage = async (contactId, message) => {
+    try {
+        const msgs = await getMessages(contactId);
+        // Avoid duplicate appends
+        if (msgs.some(m => m.id === message.id)) return msgs;
+        
+        const updated = [...msgs, message];
+        await saveMessages(contactId, updated);
+        return updated;
+    } catch (e) {
+        console.error('[Storage] appendMessage failed:', e);
+        return [];
+    }
+};
+
+export const updateMessageTransports = async (contactId, messageId, transport) => {
+    try {
+        const msgs = await getMessages(contactId);
+        let changed = false;
+        const updated = msgs.map(m => {
+            if (m.id === messageId) {
+                const nextTransports = m.transports ? [...m.transports] : [];
+                if (!nextTransports.includes(transport)) {
+                    nextTransports.push(transport);
+                    changed = true;
+                }
+                return { ...m, transports: nextTransports };
+            }
+            return m;
+        });
+
+        if (changed) {
+            await saveMessages(contactId, updated);
+        }
+        return updated;
+    } catch (e) {
+        console.error('[Storage] updateMessageTransports failed:', e);
+        return [];
+    }
+};
+
 export const deleteMessage = async (contactId, messageId) => {
     const msgs = await getMessages(contactId);
     const filtered = msgs.filter(m => m.id !== messageId);
@@ -54,3 +95,4 @@ export const deleteMessage = async (contactId, messageId) => {
 export const clearAll = async () => {
     await AsyncStorage.multiRemove([MESSAGES_KEY, CONTACTS_KEY]);
 };
+

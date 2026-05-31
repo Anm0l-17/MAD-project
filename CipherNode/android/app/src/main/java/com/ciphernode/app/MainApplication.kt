@@ -13,6 +13,7 @@ import com.facebook.react.common.ReleaseLevel
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.ciphernode.app.tor.TorPackage
+import com.ciphernode.app.bluetooth.BluetoothPackage
 
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ReactNativeHostWrapper
@@ -27,6 +28,7 @@ class MainApplication : Application(), ReactApplication {
               // Packages that cannot be autolinked yet can be added manually here, for example:
               // add(MyReactNativePackage())
               add(TorPackage())
+              add(BluetoothPackage())
             }
 
           override fun getJSMainModuleName(): String = ".expo/.virtual-metro-entry"

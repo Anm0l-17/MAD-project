@@ -7,11 +7,14 @@ import {
 } from 'react-native';
 import { INITIAL_MESSAGES } from '../data/mockData';
 import { encryptMessage, decryptMessage } from '../utils/encryption';
-import { getSocket } from '../utils/socket';
 import { colors } from '../theme';
+import { deleteMessage, getMessages } from '../utils/storage';
+import { Security } from '../utils/Security';
 
-let globalMsgId = 1000;
-function makeId() { return 'msg_' + (++globalMsgId); }
+// Transports
+import TransportCoordinator from '../utils/transports/TransportCoordinator';
+import { TransportType } from '../utils/transports/types';
+import { subscribeTorStatus } from '../utils/tor';
 
 function formatTime(ts) {
     return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -83,9 +86,23 @@ function Bubble({ msg, onStartBurn, onBurned }) {
                         <Text style={styles.senderTag}>{msg.senderName}</Text>
                     )}
                     <Text style={styles.bubbleText}>{msg.text}</Text>
-                    <Text style={styles.encTag} numberOfLines={1}>
-                        🔐 {msg.encrypted?.slice(0, 22)}…
-                    </Text>
+                    
+                    <View style={styles.badgeRow}>
+                        <Text style={styles.encTag} numberOfLines={1}>
+                            🔐 {msg.encrypted?.slice(0, 16)}…
+                        </Text>
+                        {msg.transports && msg.transports.length > 0 && (
+                            <View style={styles.transportsBadgeWrap}>
+                                {msg.transports.includes(TransportType.BLUETOOTH) && (
+                                    <Text style={styles.badgeBt}>⚡ BLE</Text>
+                                )}
+                                {msg.transports.includes(TransportType.TOR) && (
+                                    <Text style={styles.badgeTor}>🧅 Tor</Text>
+                                )}
+                            </View>
+                        )}
+                    </View>
+
                     <Text style={[styles.msgTime, isOut && { textAlign: 'right' }]}>
                         {formatTime(msg.timestamp)}{isOut ? ' ✓✓' : ''}
                     </Text>
@@ -99,84 +116,131 @@ function Bubble({ msg, onStartBurn, onBurned }) {
 }
 
 // ── Conversation Screen ───────────────────────────────────────────────────────
-import { deleteMessage } from '../utils/storage';
-import { Security } from '../utils/Security';
-
 export default function ConversationScreen({ route, navigation }) {
     const { contact, vaultMode, isP2P, myPeerId, myDisplayName, roomId, sessionKey } = route.params;
-    const [messages, setMessages] = useState(
-        isP2P ? [] : ((INITIAL_MESSAGES[contact.id] || []).filter(m => !m.burned))
-    );
+    
+    const [messages, setMessages] = useState([]);
     const [inputText, setInputText] = useState('');
     const [circuitOpen, setCircuitOpen] = useState(false);
     const [peerOnline, setPeerOnline] = useState(!isP2P);
+    const [torProgress, setTorProgress] = useState(100);
+    const [transportStatus, setTransportStatus] = useState({
+        torConnected: false,
+        bluetoothConnected: false,
+    });
+
     const listRef = useRef(null);
     const accentColor = vaultMode ? colors.emerald : colors.cobalt;
 
-    // ── P2P Socket listeners ─────────────────────────────────────────────────
+    // Load persisted chat history on mount
+    useEffect(() => {
+        const loadHistory = async () => {
+            if (isP2P) {
+                const stored = await getMessages(contact.id);
+                const active = stored.filter(m => !m.burned);
+                
+                // Decrypt persisted messages for rendering
+                const decryptedList = active.map(m => {
+                    const decryptedText = decryptMessage(m.encrypted, sessionKey);
+                    return { ...m, text: decryptedText };
+                });
+                setMessages(decryptedList);
+            } else {
+                setMessages((INITIAL_MESSAGES[contact.id] || []).filter(m => !m.burned));
+            }
+        };
+        loadHistory();
+    }, [isP2P, contact.id, sessionKey]);
+
+    // Subscribe to progressive Tor bootstrapping status
+    useEffect(() => {
+        const unsubscribe = subscribeTorStatus((status) => {
+            setTorProgress(status.bootstrapped ? 100 : status.progress);
+        });
+        return () => unsubscribe();
+    }, []);
+
+    // Subscribe to Transport coordinator connection statuses
     useEffect(() => {
         if (!isP2P) return;
-        const socket = getSocket();
+        const unsubscribe = TransportCoordinator.subscribeConnectionStatus((status) => {
+            setTransportStatus(status);
+            setPeerOnline(status.torConnected || status.bluetoothConnected);
+        });
+        return () => unsubscribe();
+    }, [isP2P]);
 
-        // Listen for incoming messages in our room
-        const onMessage = ({ roomId: rid, peerId, displayName, encrypted, burnDuration, ts }) => {
-            if (rid !== roomId) return;   // ignore messages for other rooms
-            if (peerId === myPeerId) return; // ignore self echo
-            const decrypted = decryptMessage(encrypted, sessionKey);
-            const msg = {
-                id: makeId(), contactId: contact.id,
-                text: decrypted, encrypted,
-                senderName: displayName,
-                isOutgoing: false, timestamp: ts || Date.now(),
-                burnDuration: burnDuration || null,
-                isRead: false, burned: false,
+    // ── Transport coordinator P2P listener & BT session setup ─────────────────
+    useEffect(() => {
+        if (!isP2P) return;
+
+        // Set active session in coordinator
+        TransportCoordinator.setSession(roomId, myPeerId, myDisplayName, contact.id);
+
+        // Spin up Bluetooth Classic server & client discovery concurrently (Symmetric Active Connect)
+        TransportCoordinator.startBluetoothSession(myPeerId, contact.id);
+
+        // Subscribe to incoming messages over both paths
+        const unsubscribeMsg = TransportCoordinator.subscribeMessage((uiMessage) => {
+            const decrypted = decryptMessage(uiMessage.encrypted, sessionKey);
+            const decryptedMsg = {
+                ...uiMessage,
+                text: decrypted,
             };
-            setMessages(prev => [...prev, msg]);
+            setMessages(prev => {
+                if (prev.some(m => m.id === uiMessage.id)) return prev;
+                return [...prev, decryptedMsg];
+            });
             setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
-        };
+        });
 
-        const onPeerJoined = () => setPeerOnline(true);
-        const onRoomStatus = ({ memberCount }) => setPeerOnline(memberCount >= 2);
-
-        socket.on('message', onMessage);
-        socket.on('peer-joined', onPeerJoined);
-        socket.on('room-status', onRoomStatus);
+        // Subscribe to delivery transport updates (badge rendering)
+        const unsubscribeBadge = TransportCoordinator.subscribeTransportUpdate(({ messageId, transport }) => {
+            setMessages(prev => prev.map(m => {
+                if (m.id === messageId) {
+                    const currentTransports = m.transports ? [...m.transports] : [];
+                    if (!currentTransports.includes(transport)) {
+                        currentTransports.push(transport);
+                    }
+                    return { ...m, transports: currentTransports };
+                }
+                return m;
+            }));
+        });
 
         return () => {
-            socket.off('message', onMessage);
-            socket.off('peer-joined', onPeerJoined);
-            socket.off('room-status', onRoomStatus);
+            unsubscribeMsg();
+            unsubscribeBadge();
+            TransportCoordinator.stopBluetoothSession();
         };
-    }, [isP2P, myPeerId, contact.id, sessionKey]);
+    }, [isP2P, roomId, myPeerId, myDisplayName, contact.id, sessionKey]);
 
     // ── Send ──────────────────────────────────────────────────────────────────
-    const handleSend = useCallback(() => {
+    const handleSend = useCallback(async () => {
         const text = inputText.trim();
         if (!text) return;
         setInputText('');
 
         const enc = encryptMessage(text, sessionKey);
-        const msg = {
-            id: makeId(), contactId: contact.id,
-            text, encrypted: enc,
-            senderName: myDisplayName,
-            isOutgoing: true, timestamp: Date.now(),
-            burnDuration: null, isRead: true, burned: false,
-        };
-        setMessages(prev => [...prev, msg]);
-        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
 
         if (isP2P) {
-            const socket = getSocket();
-            socket.emit('message', {
-                roomId,
-                peerId: myPeerId,
-                displayName: myDisplayName,
-                encrypted: enc,
-                burnDuration: null,
-            });
+            // Concurrent routing over Tor + Bluetooth via Coordinator
+            const uiMsg = await TransportCoordinator.sendMessage(contact.id, text, enc, null);
+            setMessages(prev => [...prev, uiMsg]);
+            setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
         } else {
             // Demo auto-reply for mock conversations
+            const msg = {
+                id: 'msg_' + Date.now(), contactId: contact.id,
+                text, encrypted: enc,
+                senderName: myDisplayName,
+                isOutgoing: true, timestamp: Date.now(),
+                burnDuration: null, isRead: true, burned: false,
+                transports: [TransportType.TOR],
+            };
+            setMessages(prev => [...prev, msg]);
+            setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+
             const replies = [
                 'Circuit integrity confirmed.', 'Copy. Key rotation complete.',
                 'Message received. Clean channel.', 'Relay handshake successful.',
@@ -187,17 +251,18 @@ export default function ConversationScreen({ route, navigation }) {
                 const shouldBurn = Math.random() > 0.5;
                 const enc2 = encryptMessage(replyText, sessionKey);
                 const reply = {
-                    id: makeId(), contactId: contact.id,
+                    id: 'msg_' + Date.now() + '_reply', contactId: contact.id,
                     text: replyText, encrypted: enc2,
                     isOutgoing: false, timestamp: Date.now(),
                     burnDuration: shouldBurn ? 20 + Math.floor(Math.random() * 40) : null,
                     isRead: false, burned: false,
+                    transports: [TransportType.TOR],
                 };
                 setMessages(prev => [...prev, reply]);
                 setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
             }, delay);
         }
-    }, [inputText, isP2P, roomId, myPeerId, myDisplayName, contact.id, sessionKey]);
+    }, [inputText, isP2P, myDisplayName, contact.id, sessionKey]);
 
     // ── Burn ──────────────────────────────────────────────────────────────────
     const handleStartBurn = (id) => setMessages(prev => prev.map(m => m.id === id ? { ...m, isRead: true } : m));
@@ -240,7 +305,13 @@ export default function ConversationScreen({ route, navigation }) {
                     <Text style={styles.headerName}>{contact.alias}</Text>
                     <Text style={[styles.headerStatus, { color: peerOnline ? accentColor : colors.text3 }]}>
                         {isP2P
-                            ? (peerOnline ? '● P2P connected · encrypted' : '● waiting for peer…')
+                            ? (transportStatus.torConnected && transportStatus.bluetoothConnected
+                                ? '● Tor & Bluetooth Active ⚡🧅'
+                                : transportStatus.bluetoothConnected
+                                    ? '● Bluetooth Local Active ⚡'
+                                    : transportStatus.torConnected
+                                        ? '● Tor Onion Active 🧅'
+                                        : '● waiting for peer…')
                             : (contact.online ? '● online · hidden service' : '● offline · queued')}
                     </Text>
                 </TouchableOpacity>
@@ -249,14 +320,22 @@ export default function ConversationScreen({ route, navigation }) {
                 </TouchableOpacity>
             </View>
 
+            {/* Tor progressive bootstrapping status bar */}
+            {isP2P && torProgress < 100 && (
+                <View style={styles.progressiveBootTrack}>
+                    <View style={[styles.progressiveBootFill, { width: `${torProgress}%` }]} />
+                    <Text style={styles.progressiveBootText}>TUNNELING TOR SECURE CIRCUIT: {torProgress}%</Text>
+                </View>
+            )}
+
             {/* Circuit map */}
             <Animated.View style={[styles.circuitDrawer, { maxHeight: circuitHeight }]}>
                 <Text style={[styles.circuitTitle, { color: accentColor }]}>
-                    {isP2P ? 'P2P SESSION' : 'ACTIVE TOR CIRCUIT'}
+                    {isP2P ? 'P2P SECURE SESSIONS' : 'ACTIVE TOR CIRCUIT'}
                 </Text>
                 {isP2P ? (
                     <View style={styles.circuitRow}>
-                        {['📱 YOU', '🔗 Relay', `📱 ${contact.alias}`].map((node, i, arr) => (
+                        {['📱 YOU', '⚡ BLE P2P', '🧅 Tor Onion', `📱 ${contact.alias}`].map((node, i, arr) => (
                             <React.Fragment key={i}>
                                 <View style={styles.circuitNode}><Text style={styles.circuitNodeText}>{node}</Text></View>
                                 {i < arr.length - 1 && <Text style={[styles.circuitArrow, { color: accentColor }]}>→</Text>}
@@ -275,15 +354,15 @@ export default function ConversationScreen({ route, navigation }) {
                 )}
                 <Text style={styles.circuitSub}>
                     {isP2P
-                        ? `Room: ${roomId?.slice(0, 20)}… · AES-256 encrypted`
-                        : '3 hops · ~220ms · AES-256 encrypted'}
+                        ? `Dual-Path: BLE Classic + Tor SOCKS5 · AES-256 E2EE`
+                        : '3 hops · ~220ms · AES-256 E2EE'}
                 </Text>
             </Animated.View>
 
             {/* E2E banner */}
             <View style={styles.e2eBanner}>
                 <Text style={styles.e2eText}>
-                    🔐 {isP2P ? 'AES-256 E2E encrypted · Socket.io relay' : 'End-to-end encrypted · Tap burn messages to start timer'}
+                    🔐 {isP2P ? 'AES-256 End-to-End Encrypted · Dual-Path Delivery Active' : 'End-to-end encrypted · Tap burn messages to start timer'}
                 </Text>
             </View>
 
@@ -362,7 +441,7 @@ const styles = StyleSheet.create({
     msgIn: { justifyContent: 'flex-start' },
     bubble: { maxWidth: '78%', borderRadius: 18, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 },
     bubbleText: { fontSize: 14, color: colors.text1, lineHeight: 20 },
-    encTag: { fontSize: 9, color: colors.text3, fontFamily: 'monospace', marginTop: 4 },
+    encTag: { fontSize: 9, color: colors.text3, fontFamily: 'monospace' },
     msgTime: { fontSize: 10, color: colors.text3, marginTop: 4 },
     burnWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
     burnTrack: { flex: 1, height: 2, backgroundColor: colors.surface3, borderRadius: 99, overflow: 'hidden' },
@@ -381,4 +460,66 @@ const styles = StyleSheet.create({
     },
     sendBtn: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
     sendIcon: { color: '#fff', fontSize: 16 },
+
+    // Progressive bootstrap bar
+    progressiveBootTrack: {
+        height: 18,
+        backgroundColor: 'rgba(255, 149, 0, 0.1)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        position: 'relative',
+        overflow: 'hidden',
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255, 149, 0, 0.2)',
+    },
+    progressiveBootFill: {
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(255, 149, 0, 0.3)',
+    },
+    progressiveBootText: {
+        fontSize: 9,
+        color: '#FF9500',
+        fontFamily: 'monospace',
+        fontWeight: 'bold',
+        zIndex: 1,
+    },
+
+    // Transports Badges
+    badgeRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 4,
+        gap: 8,
+    },
+    transportsBadgeWrap: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    badgeBt: {
+        fontSize: 8,
+        color: '#00E676',
+        backgroundColor: 'rgba(0, 230, 118, 0.12)',
+        paddingHorizontal: 5,
+        paddingVertical: 1,
+        borderRadius: 4,
+        fontFamily: 'monospace',
+        fontWeight: '700',
+        overflow: 'hidden',
+    },
+    badgeTor: {
+        fontSize: 8,
+        color: '#007AFF',
+        backgroundColor: 'rgba(0, 122, 255, 0.15)',
+        paddingHorizontal: 5,
+        paddingVertical: 1,
+        borderRadius: 4,
+        fontFamily: 'monospace',
+        fontWeight: '700',
+        overflow: 'hidden',
+    },
 });

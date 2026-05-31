@@ -64,6 +64,12 @@ export default function ChatListScreen({ navigation }) {
     const accentColor = colors.cobalt;
     const [messages, setMessages] = useState(INITIAL_MESSAGES);
     const [torConnected, setTorConnected] = useState(isTorActive());
+    const [torStatus, setTorStatus] = useState({
+        running: false,
+        bootstrapped: false,
+        progress: 0,
+        status: 'Tor disconnected',
+    });
 
     useFocusEffect(
         useCallback(() => {
@@ -73,7 +79,10 @@ export default function ChatListScreen({ navigation }) {
     );
 
     useEffect(() => {
-        const unsubscribe = subscribeTorStatus(status => setTorConnected(Boolean(status.bootstrapped)));
+        const unsubscribe = subscribeTorStatus(status => {
+            setTorStatus(status);
+            setTorConnected(Boolean(status.bootstrapped));
+        });
         return () => unsubscribe();
     }, []);
 
@@ -91,8 +100,19 @@ export default function ChatListScreen({ navigation }) {
             <View style={styles.header}>
                 <View>
                     <Text style={styles.headerTitle}>CipherNode</Text>
-                    <Text style={[styles.headerSub, { color: torConnected ? colors.emerald : colors.danger }]}>
-                        {torConnected ? '● Tor Circuit Active' : '● Tor Disconnected'}
+                    <Text style={[
+                        styles.headerSub,
+                        {
+                            color: torConnected
+                                ? colors.emerald
+                                : (torStatus.progress > 0 && torStatus.progress < 100 ? '#FF9500' : colors.danger)
+                        }
+                    ]}>
+                        {torConnected
+                            ? '● Tor Circuit Active'
+                            : (torStatus.progress > 0 && torStatus.progress < 100
+                                ? `● Tor Bootstrapping (${torStatus.progress}%)`
+                                : `● ${torStatus.status || 'Tor Disconnected'}`)}
                     </Text>
                 </View>
                 <View style={styles.headerActions}>

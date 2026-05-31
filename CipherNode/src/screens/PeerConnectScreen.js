@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
     View, Text, TouchableOpacity, TextInput,
     StyleSheet, ActivityIndicator, Alert,
+    PermissionsAndroid, Platform,
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -10,6 +11,32 @@ import { getOrCreatePeerId, getDisplayName, setDisplayName } from '../utils/peer
 import { getSocket } from '../utils/socket';
 import { generateSecureKey } from '../utils/encryption';
 import { colors } from '../theme';
+
+async function requestBluetoothPermissions() {
+    if (Platform.OS !== 'android') return true;
+    try {
+        if (Platform.Version >= 31) {
+            const granted = await PermissionsAndroid.requestMultiple([
+                PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+                PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+                PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE,
+            ]);
+            return (
+                granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED &&
+                granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED &&
+                granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE] === PermissionsAndroid.RESULTS.GRANTED
+            );
+        } else {
+            const granted = await PermissionsAndroid.request(
+                PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+            );
+            return granted === PermissionsAndroid.RESULTS.GRANTED;
+        }
+    } catch (err) {
+        console.warn('[Permissions] Failed to request Bluetooth permissions:', err);
+        return false;
+    }
+}
 
 export default function PeerConnectScreen({ navigation }) {
     const [tab, setTab] = useState('show');
@@ -26,6 +53,9 @@ export default function PeerConnectScreen({ navigation }) {
         let isMounted = true;
 
         (async () => {
+            // Dynmically request Bluetooth permissions on mount
+            await requestBluetoothPermissions();
+
             const id = await getOrCreatePeerId();
             const n = await getDisplayName();
             if (!isMounted) return;
