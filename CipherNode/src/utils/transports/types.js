@@ -16,7 +16,7 @@ export const TransportType = {
  * @param {string[]} transports - Transports that successfully delivered this message
  * @returns {object} Message envelope
  */
-export function createMessageEnvelope(id, roomId, peerId, displayName, encrypted, burnDuration = null, transports = []) {
+export function createMessageEnvelope(id, roomId, peerId, displayName, encrypted, burnDuration = 5, transports = []) {
     return {
         id,
         roomId,

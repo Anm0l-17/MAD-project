@@ -87,7 +87,7 @@ class TransportCoordinator {
     /**
      * Starts Bluetooth Server and Active Scanner for symmetric P2P pairing.
      */
-    async startBluetoothSession(myPeerId, theirPeerId) {
+    async startBluetoothSession(myPeerId, theirPeerId, minRssi = -80) {
         await this.initialize();
         const supported = await BluetoothTransport.isSupported();
         if (!supported) return;
@@ -100,7 +100,7 @@ class TransportCoordinator {
 
         // Symmetric active-connect: both advertise RFCOMM server AND run discovery client
         await BluetoothTransport.startServer(myPeerId);
-        await BluetoothTransport.startDiscovery(theirPeerId);
+        await BluetoothTransport.startDiscovery(theirPeerId, minRssi);
     }
 
     /**
@@ -117,7 +117,7 @@ class TransportCoordinator {
      * @param {string} encrypted - AES-encrypted ciphertext with HMAC
      * @param {number|null} burnDuration - Self destruct time
      */
-    async sendMessage(contactId, text, encrypted, burnDuration = null) {
+    async sendMessage(contactId, text, encrypted, burnDuration = 5) {
         await this.initialize();
         const msgId = uuid.v4();
         
@@ -236,7 +236,7 @@ class TransportCoordinator {
             senderName: envelope.displayName,
             isOutgoing: false,
             timestamp: envelope.timestamp,
-            burnDuration: envelope.burnDuration,
+            burnDuration: envelope.burnDuration ?? 5,
             isRead: false,
             burned: false,
             transports,

@@ -1,13 +1,11 @@
 // src/screens/ChatListScreen.js
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View, Text, FlatList, TouchableOpacity,
     StyleSheet, StatusBar,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { CONTACTS, INITIAL_MESSAGES, MY_NODE } from '../data/mockData';
-import { isTorActive } from '../utils/socket';
-import { subscribeTorStatus } from '../utils/tor';
 import { colors } from '../theme';
 
 function formatTime(ts) {
@@ -63,28 +61,12 @@ function ContactRow({ contact, lastMsg, onPress }) {
 export default function ChatListScreen({ navigation }) {
     const accentColor = colors.cobalt;
     const [messages, setMessages] = useState(INITIAL_MESSAGES);
-    const [torConnected, setTorConnected] = useState(isTorActive());
-    const [torStatus, setTorStatus] = useState({
-        running: false,
-        bootstrapped: false,
-        progress: 0,
-        status: 'Tor disconnected',
-    });
 
     useFocusEffect(
         useCallback(() => {
             StatusBar.setBarStyle('light-content');
-            setTorConnected(isTorActive());
         }, [])
     );
-
-    useEffect(() => {
-        const unsubscribe = subscribeTorStatus(status => {
-            setTorStatus(status);
-            setTorConnected(Boolean(status.bootstrapped));
-        });
-        return () => unsubscribe();
-    }, []);
 
     const getLastMsg = (contactId) => {
         const msgs = messages[contactId] || [];
@@ -103,16 +85,10 @@ export default function ChatListScreen({ navigation }) {
                     <Text style={[
                         styles.headerSub,
                         {
-                            color: torConnected
-                                ? colors.emerald
-                                : (torStatus.progress > 0 && torStatus.progress < 100 ? '#FF9500' : colors.danger)
+                            color: colors.text3
                         }
                     ]}>
-                        {torConnected
-                            ? '● Tor Circuit Active'
-                            : (torStatus.progress > 0 && torStatus.progress < 100
-                                ? `● Tor Bootstrapping (${torStatus.progress}%)`
-                                : `● ${torStatus.status || 'Tor Disconnected'}`)}
+                        ● Android Nearby Mode · Tor Disabled
                     </Text>
                 </View>
                 <View style={styles.headerActions}>

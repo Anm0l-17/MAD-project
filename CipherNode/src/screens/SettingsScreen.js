@@ -13,7 +13,6 @@ import {
     DEFAULT_SERVER_URL,
     isRelayUrlAllowed,
 } from '../utils/socket';
-import { getTorStatus, subscribeTorStatus, startTor } from '../utils/tor';
 
 export default function SettingsScreen({ navigation }) {
     const [burnEnabled, setBurnEnabled] = useState(true);
@@ -22,14 +21,9 @@ export default function SettingsScreen({ navigation }) {
     
     const [relayInput, setRelayInput] = useState('');
     const [isSaving, setIsSaving] = useState(false);
-    const [torStatus, setTorStatus] = useState(null);
 
     useEffect(() => {
         getRelayUrl().then(url => setRelayInput(url));
-        getTorStatus().then(status => setTorStatus(status));
-        startTor().then(status => setTorStatus(status));
-        const unsubscribe = subscribeTorStatus(setTorStatus);
-        return () => unsubscribe();
     }, []);
 
     const handleSaveRelay = async () => {
@@ -108,17 +102,9 @@ export default function SettingsScreen({ navigation }) {
                         icon="🧅"
                         iconBg={colors.surface3}
                         label="Tor Runtime"
-                        value={
-                            torStatus?.bootstrapped
-                                ? 'Bootstrapped'
-                                : torStatus?.running
-                                    ? `Starting (${torStatus?.progress || 0}%)`
-                                    : 'Stopped'
-                        }
+                        value="Disabled at runtime"
                     >
-                        <Text style={styles.chevron}>
-                            {torStatus?.bootstrapped ? '✓' : torStatus?.running ? '…' : '!'}
-                        </Text>
+                        <Text style={styles.chevron}>✕</Text>
                     </SettingRow>
                     <View style={styles.separator} />
                     <SettingRow icon="♾️" iconBg={colors.surface3} label="Circuit Rotation" value="Every 10 min">

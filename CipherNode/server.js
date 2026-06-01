@@ -63,11 +63,14 @@ io.on('connection', (socket) => {
     });
 
     // Device B scanned Device A's QR — join both to a shared room
-    socket.on('connect-peer', ({ myId, myName, theirId, sessionKey }) => {
+    socket.on('connect-peer', ({ myId, myName, theirId, sessionKey, minRssi }) => {
         const cleanMyId = sanitizeInput(myId, 128);
         const cleanMyName = sanitizeInput(myName, 32);
         const cleanTheirId = sanitizeInput(theirId, 128);
         const cleanKey = sanitizeInput(sessionKey, 256);
+        const safeMinRssi = Number.isFinite(Number(minRssi))
+            ? Math.max(-100, Math.min(-50, Number(minRssi)))
+            : -80;
 
         // Anti-Spoofing: Verify socket owns this peerId
         if (socket.data.peerId !== cleanMyId) {
@@ -99,6 +102,7 @@ io.on('connection', (socket) => {
                 fromId: cleanMyId,
                 fromName: cleanMyName || 'Peer',
                 sessionKey: cleanKey,
+                minRssi: safeMinRssi,
             });
         }
 
@@ -127,7 +131,7 @@ io.on('connection', (socket) => {
             peerId: cleanPeerId,
             displayName: cleanName,
             encrypted,
-            burnDuration: burnDuration || null,
+            burnDuration: burnDuration ?? 5,
             ts: Date.now(),
         });
     });
