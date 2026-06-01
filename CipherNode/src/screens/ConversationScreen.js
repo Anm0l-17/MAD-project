@@ -42,7 +42,7 @@ function BurnBar({ duration, isRead, onBurned }) {
     const col = remaining > 10 ? '#FF9500' : colors.danger;
 
     if (!isRead) return (
-        <Text style={[styles.burnHint, { color: '#FF9500' }]}>⏱ {duration}s · timer starts on read</Text>
+        <Text style={[styles.burnHint, { color: '#FF9500' }]}>⏱ {duration}s · timer starts on read/display</Text>
     );
     return (
         <View style={styles.burnWrap}>
@@ -74,8 +74,7 @@ function Bubble({ msg, onStartBurn, onBurned }) {
     return (
         <Animated.View style={{ opacity: fadeAnim }}>
             <View style={[styles.msgRow, isOut ? styles.msgOut : styles.msgIn]}>
-                <TouchableOpacity
-                    activeOpacity={1}
+                <View
                     style={[
                         styles.bubble,
                         {
@@ -111,7 +110,7 @@ function Bubble({ msg, onStartBurn, onBurned }) {
                     {msg.burnDuration && !msg.burned && (
                         <BurnBar duration={msg.burnDuration} isRead={readStarted} onBurned={handleBurnComplete} />
                     )}
-                </TouchableOpacity>
+                </View>
             </View>
         </Animated.View>
     );
@@ -257,7 +256,9 @@ export default function ConversationScreen({ route, navigation }) {
     }, [inputText, isP2P, myDisplayName, contact.id, sessionKey]);
 
     // ── Burn ──────────────────────────────────────────────────────────────────
-    const handleStartBurn = (id) => setMessages(prev => prev.map(m => m.id === id ? { ...m, isRead: true } : m));
+    const handleStartBurn = useCallback((id) => {
+        setMessages(prev => prev.map(m => m.id === id ? { ...m, isRead: true } : m));
+    }, []);
     
     const handleBurned = async (id) => {
         setMessages(prev => prev.filter(m => m.id !== id));

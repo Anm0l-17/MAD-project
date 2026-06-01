@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.util.Log
 import kotlin.math.max
+import kotlin.math.min
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.io.IOException
@@ -128,7 +129,7 @@ class BluetoothModule(private val reactContext: ReactApplicationContext) :
 
         try {
             targetPeerId = theirPeerId
-            minRssiThreshold = max(-100, minRssi ?: -80)
+            minRssiThreshold = max(-100, min(-50, minRssi ?: -80))
             
             // Register BroadcastReceiver for discovery if not already done
             if (!receiverRegistered) {

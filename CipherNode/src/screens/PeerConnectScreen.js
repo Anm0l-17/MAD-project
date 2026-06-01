@@ -51,7 +51,8 @@ export default function PeerConnectScreen({ navigation }) {
     const hasScanned = useRef(false);
 
     const proximityToRssi = (metersRaw) => {
-        const meters = Math.max(1, Math.min(10, Number.parseInt(metersRaw, 10) || 3));
+        const parsed = Number(metersRaw);
+        const meters = Math.max(1, Math.min(10, Number.isFinite(parsed) ? parsed : 3));
         // Approx mapping: 1m≈-55, 3m≈-65, 5m≈-72, 10m≈-80
         return Math.max(-90, Math.min(-50, Math.round(-55 - (meters - 1) * 2.8)));
     };

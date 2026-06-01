@@ -8,7 +8,7 @@ const DEV_DEFAULT_SERVER_URL = 'http://192.168.131.1:3001';
 const TOR_RUNTIME_ENABLED = false;
 export const DEFAULT_SERVER_URL = __DEV__
     ? DEV_DEFAULT_SERVER_URL
-    : 'http://127.0.0.1:3001';
+    : 'http://your-relay-server:3001';
 
 let _socket = null;
 let _torActive = false;
