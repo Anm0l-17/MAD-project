@@ -2,25 +2,24 @@
 // Singleton Socket.io client — connect once, share everywhere
 import { io } from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ensureTorReady, subscribeTorStatus } from './tor';
 
 const SERVER_URL_KEY = '@cipher_relay_url';
 const DEV_DEFAULT_SERVER_URL = 'http://192.168.131.1:3001';
+const TOR_RUNTIME_ENABLED = false;
 export const DEFAULT_SERVER_URL = __DEV__
     ? DEV_DEFAULT_SERVER_URL
-    : 'http://your-onion-address.onion';
+    : 'http://127.0.0.1:3001';
 
 let _socket = null;
 let _torActive = false;
 let _torStatus = {
     running: false,
     bootstrapped: false,
-    progress: 0,
-    status: '',
+    progress: 100,
+    status: 'Tor disabled at runtime',
     socksPort: 9050,
     lastError: null,
 };
-let _torListenerInitialized = false;
 
 export async function getRelayUrl() {
     try {
@@ -73,50 +72,20 @@ function isOnionUrl(url) {
 }
 
 export function isRelayUrlAllowed(url) {
+    if (!TOR_RUNTIME_ENABLED) return true;
     if (__DEV__) return true;
     return isOnionUrl(url);
 }
 
-function ensureTorListener() {
-    if (_torListenerInitialized) return;
-    _torListenerInitialized = true;
-    subscribeTorStatus((status) => {
-        const previouslyActive = _torActive;
-        _torStatus = status;
-        _torActive = status.bootstrapped;
-        
-        // If Tor finishes bootstrapping in the background, autoconnect the socket!
-        if (status.bootstrapped && !previouslyActive) {
-            console.log('[Socket] Tor bootstrap complete. Establishing relay connection...');
-            connectSocket().catch(e => console.warn('[Socket] Auto-connect failed:', e));
-        }
-    });
-}
-
 export async function connectSocket() {
-    ensureTorListener();
-
     if (_socket) {
         if (_socket.connected) return _socket;
         _socket.disconnect();
     }
-    
-    // Fail-Closed Guard check (Tor must be bootstrapped for release builds)
-    // Check current status in a non-blocking manner
-    const status = _torStatus.running ? _torStatus : await getTorStatus();
-    _torStatus = status;
-    _torActive = status.bootstrapped;
-
-    if (!status.bootstrapped) {
-        if (!__DEV__) {
-            console.log('[Tor Security Check] Tor bootstrap in progress. Deferring connection to prevent IP leakage.');
-            return null;
-        }
-    }
 
     const url = await getRelayUrl();
     if (!isRelayUrlAllowed(url)) {
-        console.error('[Tor Security Check] Relay URL rejected. Use a .onion address in release builds.');
+        console.error('[Relay] URL rejected.');
         return null;
     }
     
@@ -125,11 +94,10 @@ export async function connectSocket() {
         reconnection: true,
         reconnectionAttempts: 10,
         reconnectionDelay: 1000,
-        // In native ejected environment, socket.io-client is routed over Tor SOCKS5 using native engine bridges
     });
 
     _socket.on('connect', () => {
-        console.log('[Socket] Connected to onion relay:', url, 'ID:', _socket.id);
+        console.log('[Socket] Connected to relay:', url, 'ID:', _socket.id);
     });
     _socket.on('connect_error', (err) => {
         console.warn('[Socket] Connect error to', url, ':', err.message);
@@ -148,4 +116,3 @@ export function disconnectSocket() {
         _torActive = false;
     }
 }
-

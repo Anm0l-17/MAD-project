@@ -13,18 +13,16 @@ import SettingsScreen from './src/screens/SettingsScreen';
 
 // Socket
 import { connectSocket } from './src/utils/socket';
-import { startTor } from './src/utils/tor';
 
 const Stack = createNativeStackNavigator();
 
 export default function App() {
   useEffect(() => {
-    // Connect to the Relay Server on launch (fail-closed if Tor proxy is unavailable)
+    // Connect to relay on launch (Tor runtime is disabled)
     const initSocket = async () => {
-      await startTor();
       const socket = await connectSocket();
       if (!socket) {
-        console.warn('[App] Tor proxy not detected. Running in offline/local mode.');
+        console.warn('[App] Relay connection unavailable. Running in offline/local mode.');
       }
     };
     initSocket();

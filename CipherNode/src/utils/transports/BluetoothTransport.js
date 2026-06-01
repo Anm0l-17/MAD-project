@@ -92,11 +92,11 @@ class BluetoothTransport {
      * Starts active Bluetooth discovery to locate and connect to a peer.
      * @param {string} theirPeerId - Peer ID to search for
      */
-    async startDiscovery(theirPeerId) {
+    async startDiscovery(theirPeerId, minRssi = -80) {
         if (Platform.OS !== 'android' || !BluetoothModule) return false;
         try {
-            console.log('[BluetoothTransport] Starting P2P active discovery for peer:', theirPeerId);
-            return await BluetoothModule.startBluetoothDiscovery(theirPeerId);
+            console.log('[BluetoothTransport] Starting P2P active discovery for peer:', theirPeerId, 'minRSSI:', minRssi);
+            return await BluetoothModule.startBluetoothDiscovery(theirPeerId, minRssi);
         } catch (e) {
             console.warn('[BluetoothTransport] Failed to start Bluetooth Discovery:', e.message);
             return false;

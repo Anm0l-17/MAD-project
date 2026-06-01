@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.util.Log
+import kotlin.math.max
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.io.IOException
@@ -39,6 +40,7 @@ class BluetoothModule(private val reactContext: ReactApplicationContext) :
     private var connectedThread: ConnectedThread? = null
 
     private var targetPeerId: String? = null
+    private var minRssiThreshold: Int = -80
     private var isScanning = false
     private var receiverRegistered = false
 
@@ -49,10 +51,14 @@ class BluetoothModule(private val reactContext: ReactApplicationContext) :
             val action = intent.action
             if (BluetoothDevice.ACTION_FOUND == action) {
                 val device: BluetoothDevice? = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                val rssi: Short = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, Short.MIN_VALUE)
                 try {
                     val deviceName = device?.name
-                    Log.d(TAG, "Found device: $deviceName (${device?.address})")
-                    if (deviceName != null && targetPeerId != null && deviceName.contains("CipherNode_$targetPeerId")) {
+                    Log.d(TAG, "Found device: $deviceName (${device?.address}) RSSI=$rssi threshold=$minRssiThreshold")
+                    if (deviceName != null &&
+                        targetPeerId != null &&
+                        deviceName.contains("CipherNode_$targetPeerId") &&
+                        rssi >= minRssiThreshold) {
                         Log.d(TAG, "Target device found: $deviceName. Attempting connection...")
                         stopDiscoveryInternal()
                         device?.let { connectToDevice(it) }
@@ -113,7 +119,7 @@ class BluetoothModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun startBluetoothDiscovery(theirPeerId: String, promise: Promise) {
+    fun startBluetoothDiscovery(theirPeerId: String, minRssi: Int?, promise: Promise) {
         val adapter = bluetoothAdapter
         if (adapter == null) {
             promise.reject("NOT_SUPPORTED", "Bluetooth not supported on this device")
@@ -122,6 +128,7 @@ class BluetoothModule(private val reactContext: ReactApplicationContext) :
 
         try {
             targetPeerId = theirPeerId
+            minRssiThreshold = max(-100, minRssi ?: -80)
             
             // Register BroadcastReceiver for discovery if not already done
             if (!receiverRegistered) {

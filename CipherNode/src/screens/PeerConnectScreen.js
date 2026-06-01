@@ -46,8 +46,15 @@ export default function PeerConnectScreen({ navigation }) {
     const [scanned, setScanned] = useState(false);
     const [socketReady, setReady] = useState(false);
     const [sessionKey, setSessionKey] = useState('');
+    const [proximityMeters, setProximityMeters] = useState('3');
     const [permission, requestPermission] = useCameraPermissions();
     const hasScanned = useRef(false);
+
+    const proximityToRssi = (metersRaw) => {
+        const meters = Math.max(1, Math.min(10, Number.parseInt(metersRaw, 10) || 3));
+        // Approx mapping: 1m≈-55, 3m≈-65, 5m≈-72, 10m≈-80
+        return Math.max(-90, Math.min(-50, Math.round(-55 - (meters - 1) * 2.8)));
+    };
 
     useEffect(() => {
         let isMounted = true;
@@ -81,7 +88,7 @@ export default function PeerConnectScreen({ navigation }) {
             }
 
             // ── Device A listens for connection-request ──────────────────
-            const onConnectionRequest = ({ roomId, fromId, fromName, sessionKey: relayedKey }) => {
+            const onConnectionRequest = ({ roomId, fromId, fromName, sessionKey: relayedKey, minRssi }) => {
                 if (!isMounted) return;
                 const contact = {
                     id: fromId,
@@ -97,6 +104,7 @@ export default function PeerConnectScreen({ navigation }) {
                     myDisplayName: n,
                     roomId,
                     sessionKey: relayedKey || key, // secure key derived out-of-band via QR
+                    minRssi: Number.isFinite(minRssi) ? minRssi : proximityToRssi(proximityMeters),
                 });
             };
             socket.on('connection-request', onConnectionRequest);
@@ -140,7 +148,13 @@ export default function PeerConnectScreen({ navigation }) {
 
         const socket = getSocket();
         // Device B joins the room and relays theirKey back to Device A
-        socket.emit('connect-peer', { myId: peerId, myName: name, theirId, sessionKey: theirKey });
+        socket.emit('connect-peer', {
+            myId: peerId,
+            myName: name,
+            theirId,
+            sessionKey: theirKey,
+            minRssi: proximityToRssi(proximityMeters),
+        });
 
         navigation.replace('Conversation', {
             contact: { id: theirId, alias: theirName, hue: 220, online: true, isVault: false },
@@ -149,6 +163,7 @@ export default function PeerConnectScreen({ navigation }) {
             myDisplayName: name,
             roomId: rid,
             sessionKey: theirKey,
+            minRssi: proximityToRssi(proximityMeters),
         });
     };
 
@@ -184,8 +199,20 @@ export default function PeerConnectScreen({ navigation }) {
             ]}>
                 <View style={[styles.statusDot, { backgroundColor: socketReady ? colors.emerald : colors.danger }]} />
                 <Text style={[styles.statusText, { color: socketReady ? colors.emerald : colors.danger }]}>
-                    {socketReady ? '🧅 Tor Circuit Active · Ready to pair' : '🧅 Tor disconnected · Fail-closed active'}
+                    {socketReady ? '📶 Relay Ready · Bluetooth pairing active' : '📶 Relay offline · Bluetooth local mode'}
                 </Text>
+            </View>
+
+            <View style={styles.proximityBox}>
+                <Text style={styles.proximityLabel}>Nearby range (meters)</Text>
+                <TextInput
+                    style={styles.proximityInput}
+                    keyboardType="number-pad"
+                    value={proximityMeters}
+                    onChangeText={(value) => setProximityMeters(value.replace(/[^0-9]/g, '').slice(0, 2))}
+                    placeholder="3"
+                    placeholderTextColor={colors.text3}
+                />
             </View>
 
             {/* Tabs */}
@@ -289,6 +316,32 @@ const styles = StyleSheet.create({
     statusBar: { flexDirection: 'row', alignItems: 'center', gap: 8, margin: 16, borderRadius: 10, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 8 },
     statusDot: { width: 8, height: 8, borderRadius: 4 },
     statusText: { fontSize: 11, fontFamily: 'monospace' },
+    proximityBox: {
+        marginHorizontal: 16,
+        marginTop: -4,
+        marginBottom: 12,
+        padding: 12,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surface1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    proximityLabel: { color: colors.text2, fontSize: 12, fontWeight: '600' },
+    proximityInput: {
+        width: 64,
+        textAlign: 'center',
+        color: colors.text1,
+        backgroundColor: colors.surface2,
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: 8,
+        paddingVertical: 6,
+        fontSize: 14,
+        fontWeight: '600',
+    },
     tabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: colors.border },
     tab: { flex: 1, paddingVertical: 14, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
     tabActive: { borderBottomColor: colors.cobalt },
