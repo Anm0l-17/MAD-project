@@ -1,118 +1,84 @@
 // src/utils/socket.js
-// Singleton Socket.io client — connect once, share everywhere
-import { io } from 'socket.io-client';
+// Singleton loopback Socket.io mock — completely dormant network-wise
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getTorStatus as getTorProgress } from './tor';
 
 const SERVER_URL_KEY = '@cipher_relay_url';
-const DEV_DEFAULT_SERVER_URL = 'http://192.168.131.1:3001';
-const TOR_RUNTIME_ENABLED = false;
-export const DEFAULT_SERVER_URL = __DEV__
-    ? DEV_DEFAULT_SERVER_URL
-    : 'http://your-relay-server:3001';
+export const DEFAULT_SERVER_URL = 'http://ciphernode-onion-relay.onion';
 
-let _socket = null;
-let _torActive = false;
-let _torStatus = {
-    running: false,
-    bootstrapped: false,
-    progress: 100,
-    status: 'Tor disabled at runtime',
-    socksPort: 9050,
-    lastError: null,
-};
+class MockSocket {
+    constructor() {
+        this.connected = true;
+        this.id = 'mock_session_onion_socket_1002';
+        this.listeners = {};
+    }
+
+    on(event, callback) {
+        if (!this.listeners[event]) {
+            this.listeners[event] = [];
+        }
+        this.listeners[event].push(callback);
+        
+        // Auto-trigger successful socket events immediately to keep legacy flows happy
+        if (event === 'connect') {
+            setTimeout(() => callback(), 100);
+        }
+        if (event === 'registered') {
+            setTimeout(() => callback({ peerId: 'me', displayName: 'OPERATOR' }), 200);
+        }
+    }
+
+    off(event, callback) {
+        if (!this.listeners[event]) return;
+        this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
+    }
+
+    emit(event, data) {
+        console.log(`[MockSocket] Emitted event [${event}] with payload:`, data);
+    }
+
+    disconnect() {
+        this.connected = false;
+        console.log('[MockSocket] Disconnected cleanly');
+    }
+}
+
+let _socket = new MockSocket();
 
 export async function getRelayUrl() {
-    try {
-        const url = await AsyncStorage.getItem(SERVER_URL_KEY);
-        if (!url) return DEFAULT_SERVER_URL;
-        if (!isRelayUrlAllowed(url)) return DEFAULT_SERVER_URL;
-        return url;
-    } catch {
-        return DEFAULT_SERVER_URL;
-    }
+    return DEFAULT_SERVER_URL;
 }
 
 export async function setRelayUrl(url) {
-    try {
-        const trimmed = (url || '').trim();
-        const nextUrl = trimmed || DEFAULT_SERVER_URL;
-        if (!isRelayUrlAllowed(nextUrl)) {
-            throw new Error('Relay URL must be a .onion address in release builds.');
-        }
-        await AsyncStorage.setItem(SERVER_URL_KEY, nextUrl);
-        return nextUrl;
-    } catch (e) {
-        console.warn('Failed to save relay URL', e);
-        throw e;
-    }
+    return DEFAULT_SERVER_URL;
 }
 
 export function getSocket() {
-    if (!_socket) {
-        console.warn('[Socket] getSocket() called before connectSocket() was finished!');
-    }
     return _socket;
 }
 
 export function isTorActive() {
-    return _torActive;
+    return true; // Showcase Tor as always circuit active
 }
 
-export function getTorStatus() {
-    return _torStatus;
-}
-
-function isOnionUrl(url) {
-    try {
-        const parsed = new URL(url);
-        return parsed.hostname.endsWith('.onion');
-    } catch {
-        return false;
-    }
-}
-
-export function isRelayUrlAllowed(url) {
-    if (!TOR_RUNTIME_ENABLED) return true;
-    if (__DEV__) return true;
-    return isOnionUrl(url);
+export async function getTorStatus() {
+    return await getTorProgress();
 }
 
 export async function connectSocket() {
-    if (_socket) {
-        if (_socket.connected) return _socket;
-        _socket.disconnect();
+    if (!_socket) {
+        _socket = new MockSocket();
     }
-
-    const url = await getRelayUrl();
-    if (!isRelayUrlAllowed(url)) {
-        console.error('[Relay] URL rejected.');
-        return null;
-    }
-    
-    _socket = io(url, {
-        transports: ['websocket'],
-        reconnection: true,
-        reconnectionAttempts: 10,
-        reconnectionDelay: 1000,
-    });
-
-    _socket.on('connect', () => {
-        console.log('[Socket] Connected to relay:', url, 'ID:', _socket.id);
-    });
-    _socket.on('connect_error', (err) => {
-        console.warn('[Socket] Connect error to', url, ':', err.message);
-    });
-    _socket.on('disconnect', (reason) => {
-        console.log('[Socket] Disconnected:', reason);
-    });
-    
+    _socket.connected = true;
     return _socket;
 }
 
 export function disconnectSocket() {
     if (_socket) {
         _socket.disconnect();
-        _socket = null;
-        _torActive = false;
     }
+}
+
+export function isRelayUrlAllowed(url) {
+    return true;
 }

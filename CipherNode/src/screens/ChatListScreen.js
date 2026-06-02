@@ -2,9 +2,11 @@
 import React, { useState, useCallback } from 'react';
 import {
     View, Text, FlatList, TouchableOpacity,
-    StyleSheet, StatusBar,
+    StyleSheet, StatusBar, Alert,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CONTACTS, INITIAL_MESSAGES, MY_NODE } from '../data/mockData';
 import { colors } from '../theme';
 
@@ -59,6 +61,7 @@ function ContactRow({ contact, lastMsg, onPress }) {
 }
 
 export default function ChatListScreen({ navigation }) {
+    const insets = useSafeAreaInsets();
     const accentColor = colors.cobalt;
     const [messages, setMessages] = useState(INITIAL_MESSAGES);
 
@@ -79,7 +82,7 @@ export default function ChatListScreen({ navigation }) {
             <StatusBar barStyle="light-content" backgroundColor="#000" />
 
             {/* Header */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) }]}>
                 <View>
                     <Text style={styles.headerTitle}>CipherNode</Text>
                     <Text style={[
@@ -93,6 +96,11 @@ export default function ChatListScreen({ navigation }) {
                 </View>
                 <View style={styles.headerActions}>
                     <TouchableOpacity
+                        style={[styles.headerBtn, { backgroundColor: 'rgba(0,122,255,0.1)', borderColor: colors.cobalt + '66' }]}
+                        onPress={() => navigation.navigate('ScanQR')}>
+                        <Text style={[styles.headerBtnText, { color: colors.cobalt }]}>📷 Scan</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
                         style={[styles.headerBtn, { backgroundColor: 'rgba(0,230,118,0.1)', borderColor: colors.emerald + '66' }]}
                         onPress={() => navigation.navigate('PeerConnect')}>
                         <Text style={[styles.headerBtnText, { color: colors.emerald }]}>🔗 Connect</Text>
@@ -101,11 +109,17 @@ export default function ChatListScreen({ navigation }) {
             </View>
 
             {/* Node ID pill */}
-            <View style={[styles.nodePill, { borderColor: accentColor + '44' }]}>
+            <TouchableOpacity 
+                activeOpacity={0.7}
+                onPress={async () => {
+                    await Clipboard.setStringAsync(MY_NODE.onion);
+                    Alert.alert('Copied to Clipboard', 'Your Onion address has been copied.');
+                }}
+                style={[styles.nodePill, { borderColor: accentColor + '44' }]}>
                 <View style={[styles.nodeDot, { backgroundColor: accentColor }]} />
                 <Text style={styles.nodeText} numberOfLines={1}>{MY_NODE.onion}</Text>
-                <Text style={styles.nodeIcon}>›</Text>
-            </View>
+                <Text style={styles.nodeIcon}>📋</Text>
+            </TouchableOpacity>
 
             {/* Section label */}
             <Text style={styles.sectionLabel}>ACTIVE NODES</Text>
@@ -131,7 +145,7 @@ export default function ChatListScreen({ navigation }) {
             />
 
             {/* Bottom tab bar */}
-            <View style={styles.tabBar}>
+            <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
                 <TouchableOpacity
                     style={[styles.tab, { borderTopColor: accentColor }]}
                     onPress={() => null}>
@@ -153,7 +167,7 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
     header: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        paddingHorizontal: 20, paddingTop: 56, paddingBottom: 12,
+        paddingHorizontal: 20, paddingBottom: 12,
     },
     headerTitle: { fontSize: 22, fontWeight: '800', color: colors.text1 },
     headerSub: { fontSize: 11, fontFamily: 'monospace', marginTop: 2 },
@@ -164,11 +178,12 @@ const styles = StyleSheet.create({
     },
     headerBtnText: { fontSize: 12, fontWeight: '600' },
     nodePill: {
-        marginHorizontal: 20, marginBottom: 10,
-        backgroundColor: colors.surface1,
-        borderWidth: 1, borderRadius: 999,
+        marginHorizontal: 16, marginBottom: 12,
+        backgroundColor: 'rgba(0,122,255,0.04)',
+        borderWidth: 1, borderRadius: 12,
+        borderColor: 'rgba(0,122,255,0.15)',
         flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: 14, paddingVertical: 9, gap: 8,
+        paddingHorizontal: 14, paddingVertical: 10, gap: 8,
     },
     nodeDot: { width: 7, height: 7, borderRadius: 99 },
     nodeText: { flex: 1, fontFamily: 'monospace', fontSize: 10, color: colors.text2 },
@@ -179,7 +194,10 @@ const styles = StyleSheet.create({
     },
     row: {
         flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: 20, paddingVertical: 13,
+        paddingHorizontal: 16, paddingVertical: 14,
+        marginHorizontal: 16, marginVertical: 6,
+        backgroundColor: colors.surface1,
+        borderRadius: 16, borderWidth: 1, borderColor: colors.border,
     },
     avatar: {
         width: 48, height: 48, borderRadius: 24,
@@ -199,7 +217,7 @@ const styles = StyleSheet.create({
     rowBottom: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     preview: { fontSize: 13, color: colors.text3, flex: 1 },
     burnTag: { fontSize: 10, color: '#FF9500', fontFamily: 'monospace' },
-    separator: { height: 1, marginLeft: 82, backgroundColor: colors.border },
+    separator: { height: 0 },
     empty: { flex: 1, alignItems: 'center', paddingTop: 60 },
     emptyText: { color: colors.text3, fontFamily: 'monospace', fontSize: 12 },
     tabBar: {

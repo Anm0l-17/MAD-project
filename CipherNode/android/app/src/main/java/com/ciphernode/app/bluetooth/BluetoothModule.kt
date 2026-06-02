@@ -10,8 +10,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.util.Log
-import kotlin.math.max
-import kotlin.math.min
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.io.IOException
@@ -41,7 +39,6 @@ class BluetoothModule(private val reactContext: ReactApplicationContext) :
     private var connectedThread: ConnectedThread? = null
 
     private var targetPeerId: String? = null
-    private var minRssiThreshold: Int = -80
     private var isScanning = false
     private var receiverRegistered = false
 
@@ -52,17 +49,41 @@ class BluetoothModule(private val reactContext: ReactApplicationContext) :
             val action = intent.action
             if (BluetoothDevice.ACTION_FOUND == action) {
                 val device: BluetoothDevice? = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                val rssi: Short = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, Short.MIN_VALUE)
+                val rssi = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, Short.MIN_VALUE)
                 try {
                     val deviceName = device?.name
-                    Log.d(TAG, "Found device: $deviceName (${device?.address}) RSSI=$rssi threshold=$minRssiThreshold")
-                    if (deviceName != null &&
-                        targetPeerId != null &&
-                        deviceName.contains("CipherNode_$targetPeerId") &&
-                        rssi >= minRssiThreshold) {
-                        Log.d(TAG, "Target device found: $deviceName. Attempting connection...")
-                        stopDiscoveryInternal()
-                        device?.let { connectToDevice(it) }
+                    Log.d(TAG, "Found device: $deviceName (${device?.address}), RSSI: $rssi")
+
+                    // AirDrop-style broad discovery
+                    if (deviceName != null && deviceName.startsWith("CipherNode_")) {
+                        val parts = deviceName.split("_")
+                        if (parts.size >= 3) {
+                            val discoveredPhone = parts[1]
+                            val discoveredPeerId = parts[2]
+                            val deviceDisplayName = parts.getOrNull(3) ?: "Nearby Peer"
+                            sendEvent("onBluetoothDeviceDiscovered", Arguments.createMap().apply {
+                                putString("peerId", discoveredPeerId)
+                                putString("phoneNumber", discoveredPhone)
+                                putString("displayName", deviceDisplayName)
+                                putInt("rssi", rssi.toInt())
+                                putString("address", device?.address)
+                            })
+                        }
+                    }
+
+                    if (deviceName != null && targetPeerId != null && targetPeerId!!.isNotEmpty() && deviceName.contains("CipherNode_$targetPeerId")) {
+                        val rssiThreshold = -80
+                        if (rssi >= rssiThreshold) {
+                            Log.d(TAG, "Target device found in proximity range (RSSI: $rssi). Attempting connection...")
+                            stopDiscoveryInternal()
+                            device?.let { connectToDevice(it) }
+                        } else {
+                            Log.d(TAG, "Target device found but out of range (RSSI: $rssi < $rssiThreshold). Proximity guard active.")
+                            sendEvent("onBluetoothDeviceOutOfRange", Arguments.createMap().apply {
+                                putString("deviceName", deviceName)
+                                putInt("rssi", rssi.toInt())
+                            })
+                        }
                     }
                 } catch (e: SecurityException) {
                     Log.e(TAG, "SecurityException during device discovery processing", e)
@@ -92,7 +113,7 @@ class BluetoothModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun startBluetoothServer(myPeerId: String, promise: Promise) {
+    fun startBluetoothServer(myPeerId: String, myPhoneNumber: String, myDisplayName: String, promise: Promise) {
         val adapter = bluetoothAdapter
         if (adapter == null) {
             promise.reject("NOT_SUPPORTED", "Bluetooth not supported on this device")
@@ -100,10 +121,12 @@ class BluetoothModule(private val reactContext: ReactApplicationContext) :
         }
 
         try {
-            // Dynamically set adapter local name to CipherNode_<myPeerId> so peer can find us!
-            if (adapter.name != "CipherNode_$myPeerId") {
-                adapter.name = "CipherNode_$myPeerId"
-                Log.d(TAG, "Set local Bluetooth name to: CipherNode_$myPeerId")
+            // Dynamically set adapter local name to CipherNode_<phoneNumber>_<myPeerId>_<displayName> so peer can find us!
+            val sanitizedName = myDisplayName.replace("_", " ").trim()
+            val expectedName = "CipherNode_${myPhoneNumber}_${myPeerId}_${sanitizedName}"
+            if (adapter.name != expectedName) {
+                adapter.name = expectedName
+                Log.d(TAG, "Set local Bluetooth name to: $expectedName")
             }
 
             // Start RFCOMM server socket
@@ -120,7 +143,7 @@ class BluetoothModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun startBluetoothDiscovery(theirPeerId: String, minRssi: Int?, promise: Promise) {
+    fun startBluetoothDiscovery(theirPeerId: String, promise: Promise) {
         val adapter = bluetoothAdapter
         if (adapter == null) {
             promise.reject("NOT_SUPPORTED", "Bluetooth not supported on this device")
@@ -129,7 +152,6 @@ class BluetoothModule(private val reactContext: ReactApplicationContext) :
 
         try {
             targetPeerId = theirPeerId
-            minRssiThreshold = max(-100, min(-50, minRssi ?: -80))
             
             // Register BroadcastReceiver for discovery if not already done
             if (!receiverRegistered) {
@@ -236,8 +258,20 @@ class BluetoothModule(private val reactContext: ReactApplicationContext) :
             Log.e(TAG, "SecurityException reading remote device name", e)
         }
 
+        var extractedPeerId = ""
+        var extractedPhone = ""
+        if (remoteDeviceName.startsWith("CipherNode_")) {
+            val parts = remoteDeviceName.split("_")
+            if (parts.size >= 3) {
+                extractedPhone = parts[1]
+                extractedPeerId = parts[2]
+            }
+        }
+
         sendEvent("onBluetoothPeerConnected", Arguments.createMap().apply {
             putString("peerName", remoteDeviceName)
+            putString("peerId", extractedPeerId)
+            putString("phoneNumber", extractedPhone)
         })
     }
 

@@ -4,6 +4,10 @@ import {
     View, Text, TouchableOpacity, Switch, TextInput,
     StyleSheet, ScrollView, Alert, KeyboardAvoidingView, Platform
 } from 'react-native';
+import QRCode from 'react-native-qrcode-svg';
+import * as Clipboard from 'expo-clipboard';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import { colors } from '../theme';
 import { MY_NODE } from '../data/mockData';
 import {
@@ -13,18 +17,70 @@ import {
     DEFAULT_SERVER_URL,
     isRelayUrlAllowed,
 } from '../utils/socket';
+import { getTorStatus, subscribeTorStatus, startTor } from '../utils/tor';
+import { getPhoneNumber, setPhoneNumber, getOrCreatePeerId, getDisplayName } from '../utils/peer';
+import { generateSecureKey } from '../utils/encryption';
 
 export default function SettingsScreen({ navigation }) {
+    const insets = useSafeAreaInsets();
     const [burnEnabled, setBurnEnabled] = useState(true);
     const [exifStrip, setExifStrip] = useState(true);
     const [deadman, setDeadman] = useState(false);
-    
+
     const [relayInput, setRelayInput] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const [torStatus, setTorStatus] = useState(null);
+    const [phoneNumber, setPhoneState] = useState('');
+    const [isSavingPhone, setIsSavingPhone] = useState(false);
+
+    // QR identity state
+    const [qrValue, setQrValue] = useState('');
+    const [peerId, setPeerId] = useState('');
+    const [displayName, setDisplayName] = useState('');
 
     useEffect(() => {
         getRelayUrl().then(url => setRelayInput(url));
+        getTorStatus().then(status => setTorStatus(status));
+        startTor().then(status => setTorStatus(status));
+        const unsubscribe = subscribeTorStatus(setTorStatus);
+
+        // Load identity and auto-generate QR if phone already saved
+        Promise.all([getPhoneNumber(), getOrCreatePeerId(), getDisplayName()])
+            .then(([phone, id, name]) => {
+                setPhoneState(phone);
+                setPeerId(id);
+                setDisplayName(name);
+                if (phone && id) {
+                    const key = generateSecureKey();
+                    setQrValue(`CIPHER:${id}:${name}:${key}`);
+                }
+            })
+            .catch(() => {});
+
+        return () => unsubscribe();
     }, []);
+
+    const handleSavePhone = async () => {
+        const trimmed = (phoneNumber || '').trim();
+        if (!trimmed || trimmed.length < 10) {
+            Alert.alert('Invalid Number', 'Please enter a valid 10-digit phone number.');
+            return;
+        }
+        setIsSavingPhone(true);
+        try {
+            await setPhoneNumber(trimmed);
+            // Generate QR immediately after saving
+            const id = peerId || (await getOrCreatePeerId());
+            const name = displayName || 'Anonymous';
+            const key = generateSecureKey();
+            setPeerId(id);
+            setQrValue(`CIPHER:${id}:${name}:${key}`);
+        } catch (e) {
+            Alert.alert('Error', 'Unable to save phone number.');
+        } finally {
+            setIsSavingPhone(false);
+        }
+    };
 
     const handleSaveRelay = async () => {
         setIsSaving(true);
@@ -58,7 +114,7 @@ export default function SettingsScreen({ navigation }) {
 
     return (
         <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) }]}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Text style={[styles.backText, { color: colors.cobalt }]}>‹</Text>
                 </TouchableOpacity>
@@ -68,7 +124,7 @@ export default function SettingsScreen({ navigation }) {
                 </View>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 24) }}>
                 {/* Node banner */}
                 <View style={styles.nodeBanner}>
                     <Text style={styles.nodeBannerText}>OPERATOR: {MY_NODE.onion}</Text>
@@ -102,14 +158,89 @@ export default function SettingsScreen({ navigation }) {
                         icon="🧅"
                         iconBg={colors.surface3}
                         label="Tor Runtime"
-                        value="Disabled at runtime"
+                        value={
+                            torStatus?.bootstrapped
+                                ? 'Bootstrapped'
+                                : torStatus?.running
+                                    ? `Starting (${torStatus?.progress || 0}%)`
+                                    : 'Stopped'
+                        }
                     >
-                        <Text style={styles.chevron}>✕</Text>
+                        <Text style={styles.chevron}>
+                            {torStatus?.bootstrapped ? '✓' : torStatus?.running ? '…' : '!'}
+                        </Text>
                     </SettingRow>
                     <View style={styles.separator} />
                     <SettingRow icon="♾️" iconBg={colors.surface3} label="Circuit Rotation" value="Every 10 min">
                         <Text style={styles.chevron}>›</Text>
                     </SettingRow>
+                </View>
+
+                {/* Profile Identity */}
+                <Text style={styles.groupLabel}>PROFILE & IDENTITY</Text>
+                <View style={styles.card}>
+                    <View style={styles.inputRow}>
+                        <Text style={styles.inputLabel}>My Phone Number (For Local Discovery)</Text>
+                        <TextInput
+                            style={styles.textInput}
+                            value={phoneNumber}
+                            onChangeText={setPhoneState}
+                            placeholder="Enter 10-digit phone number"
+                            placeholderTextColor={colors.text3}
+                            keyboardType="phone-pad"
+                            maxLength={15}
+                        />
+                        <TouchableOpacity 
+                            style={[styles.saveBtn, isSavingPhone && { opacity: 0.5 }]} 
+                            onPress={handleSavePhone}
+                            disabled={isSavingPhone}
+                        >
+                            <Text style={styles.saveBtnText}>{isSavingPhone ? 'Saving...' : 'Save Phone Number'}</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    {/* QR Code — shown as soon as phone is saved */}
+                    {qrValue ? (
+                        <>
+                            <View style={styles.separator} />
+                            <View style={styles.qrSection}>
+                                <Text style={styles.qrLabel}>📱 YOUR PAIRING QR CODE</Text>
+                                <Text style={styles.qrSub}>Tap QR code or info below to copy pairing data</Text>
+                                <TouchableOpacity 
+                                    activeOpacity={0.7}
+                                    onPress={async () => {
+                                        await Clipboard.setStringAsync(qrValue);
+                                        Alert.alert('Copied', 'Pairing identity string copied to clipboard!');
+                                    }}
+                                    style={styles.qrBox}
+                                >
+                                    <QRCode value={qrValue} size={200} color="#fff" backgroundColor="#000" />
+                                </TouchableOpacity>
+                                <TouchableOpacity 
+                                    activeOpacity={0.7}
+                                    onPress={async () => {
+                                        await Clipboard.setStringAsync(phoneNumber);
+                                        Alert.alert('Copied', 'Phone number copied to clipboard!');
+                                    }}
+                                    style={{ marginVertical: 4 }}
+                                >
+                                    <Text style={styles.qrPhone}>Phone: {phoneNumber} 📋</Text>
+                                </TouchableOpacity>
+                                {peerId ? (
+                                    <TouchableOpacity 
+                                        activeOpacity={0.7}
+                                        onPress={async () => {
+                                            await Clipboard.setStringAsync(peerId);
+                                            Alert.alert('Copied', 'Node Identity ID copied to clipboard!');
+                                        }}
+                                        style={{ marginVertical: 4 }}
+                                    >
+                                        <Text style={styles.qrNodeId}>Node: {peerId.slice(0, 18)}… 📋</Text>
+                                    </TouchableOpacity>
+                                ) : null}
+                            </View>
+                        </>
+                    ) : null}
                 </View>
 
                 {/* Security */}
@@ -163,7 +294,7 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
     header: {
         flexDirection: 'row', alignItems: 'center', gap: 4,
-        paddingTop: 52, paddingHorizontal: 14, paddingBottom: 12,
+        paddingHorizontal: 14, paddingBottom: 12,
         borderBottomWidth: 1, borderBottomColor: colors.border,
     },
     backBtn: { padding: 6, marginRight: 4 },
@@ -230,4 +361,10 @@ const styles = StyleSheet.create({
     dangerSub: { fontSize: 11, color: colors.danger + '88', marginTop: 2 },
     versionTap: { paddingVertical: 20, alignItems: 'center' },
     versionText: { fontSize: 11, color: colors.text3, fontFamily: 'monospace' },
+    qrSection: { alignItems: 'center', paddingVertical: 20, paddingHorizontal: 14 },
+    qrLabel: { fontSize: 10, letterSpacing: 2, color: colors.cobalt, fontFamily: 'monospace', marginBottom: 4 },
+    qrSub: { fontSize: 11, color: colors.text3, marginBottom: 16, textAlign: 'center' },
+    qrBox: { padding: 16, backgroundColor: '#000', borderRadius: 12, borderWidth: 1, borderColor: colors.cobalt + '44', marginBottom: 12 },
+    qrPhone: { fontSize: 13, color: colors.cobalt, fontFamily: 'monospace', marginBottom: 4 },
+    qrNodeId: { fontSize: 10, color: colors.text3, fontFamily: 'monospace' },
 });

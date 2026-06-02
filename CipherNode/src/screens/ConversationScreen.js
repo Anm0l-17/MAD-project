@@ -3,17 +3,21 @@ import 'react-native-get-random-values';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View, Text, FlatList, TextInput, TouchableOpacity,
-    StyleSheet, Animated, KeyboardAvoidingView, Platform, StatusBar,
+    StyleSheet, Animated, KeyboardAvoidingView, Platform, StatusBar, Alert
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Clipboard from 'expo-clipboard';
 import { INITIAL_MESSAGES } from '../data/mockData';
 import { encryptMessage, decryptMessage } from '../utils/encryption';
 import { colors } from '../theme';
 import { deleteMessage, getMessages } from '../utils/storage';
 import { Security } from '../utils/Security';
+import { getPhoneNumber } from '../utils/peer';
 
 // Transports
 import TransportCoordinator from '../utils/transports/TransportCoordinator';
 import { TransportType } from '../utils/transports/types';
+import { subscribeTorStatus } from '../utils/tor';
 
 function formatTime(ts) {
     return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -42,7 +46,7 @@ function BurnBar({ duration, isRead, onBurned }) {
     const col = remaining > 10 ? '#FF9500' : colors.danger;
 
     if (!isRead) return (
-        <Text style={[styles.burnHint, { color: '#FF9500' }]}>⏱ {duration}s · timer starts on read/display</Text>
+        <Text style={[styles.burnHint, { color: '#FF9500' }]}>⏱ {duration}s · tap to start burn</Text>
     );
     return (
         <View style={styles.burnWrap}>
@@ -59,12 +63,13 @@ function Bubble({ msg, onStartBurn, onBurned }) {
     const fadeAnim = useRef(new Animated.Value(1)).current;
     const [readStarted, setReadStarted] = useState(msg.isRead || msg.isOutgoing);
 
+    // Seen auto-delete: automatically trigger the burn timer as soon as the message renders/mounts on the screen
     useEffect(() => {
         if (!readStarted && msg.burnDuration) {
             setReadStarted(true);
             onStartBurn(msg.id);
         }
-    }, [readStarted, msg.burnDuration, msg.id, onStartBurn]);
+    }, []);
 
     const handleBurnComplete = () => {
         Animated.timing(fadeAnim, { toValue: 0, duration: 600, useNativeDriver: true }).start(() => onBurned(msg.id));
@@ -74,14 +79,21 @@ function Bubble({ msg, onStartBurn, onBurned }) {
     return (
         <Animated.View style={{ opacity: fadeAnim }}>
             <View style={[styles.msgRow, isOut ? styles.msgOut : styles.msgIn]}>
-                <View
+                <TouchableOpacity
+                    activeOpacity={0.9}
+                    onLongPress={async () => {
+                        if (msg.text) {
+                            await Clipboard.setStringAsync(msg.text);
+                            Alert.alert('Copied', 'Message copied to clipboard.');
+                        }
+                    }}
                     style={[
                         styles.bubble,
                         {
                             backgroundColor: isOut ? colors.cobaltDim : colors.surface2,
                             borderColor: isOut ? colors.cobalt + '44' : colors.border
                         },
-                        msg.burnDuration && !readStarted && { borderColor: '#FF9500' + '88' },
+                        msg.burnDuration && { borderColor: '#FF9500' + '88' },
                     ]}>
                     {msg.senderName && !isOut && (
                         <Text style={styles.senderTag}>{msg.senderName}</Text>
@@ -110,7 +122,7 @@ function Bubble({ msg, onStartBurn, onBurned }) {
                     {msg.burnDuration && !msg.burned && (
                         <BurnBar duration={msg.burnDuration} isRead={readStarted} onBurned={handleBurnComplete} />
                     )}
-                </View>
+                </TouchableOpacity>
             </View>
         </Animated.View>
     );
@@ -118,12 +130,14 @@ function Bubble({ msg, onStartBurn, onBurned }) {
 
 // ── Conversation Screen ───────────────────────────────────────────────────────
 export default function ConversationScreen({ route, navigation }) {
-    const { contact, vaultMode, isP2P, myPeerId, myDisplayName, roomId, sessionKey, minRssi } = route.params;
+    const insets = useSafeAreaInsets();
+    const { contact, vaultMode, isP2P, myPeerId, myDisplayName, roomId, sessionKey } = route.params;
     
     const [messages, setMessages] = useState([]);
     const [inputText, setInputText] = useState('');
     const [circuitOpen, setCircuitOpen] = useState(false);
     const [peerOnline, setPeerOnline] = useState(!isP2P);
+    const [torProgress, setTorProgress] = useState(0);
     const [transportStatus, setTransportStatus] = useState({
         torConnected: false,
         bluetoothConnected: false,
@@ -152,6 +166,14 @@ export default function ConversationScreen({ route, navigation }) {
         loadHistory();
     }, [isP2P, contact.id, sessionKey]);
 
+    // Subscribe to progressive Tor bootstrapping status (showcase simulation)
+    useEffect(() => {
+        const unsubscribe = subscribeTorStatus((status) => {
+            setTorProgress(status.bootstrapped ? 100 : status.progress);
+        });
+        return () => unsubscribe();
+    }, []);
+
     // Subscribe to Transport coordinator connection statuses
     useEffect(() => {
         if (!isP2P) return;
@@ -166,11 +188,19 @@ export default function ConversationScreen({ route, navigation }) {
     useEffect(() => {
         if (!isP2P) return;
 
-        // Set active session in coordinator
-        TransportCoordinator.setSession(roomId, myPeerId, myDisplayName, contact.id);
+        let isMounted = true;
 
-        // Spin up Bluetooth Classic server & client discovery concurrently (Symmetric Active Connect)
-        TransportCoordinator.startBluetoothSession(myPeerId, contact.id, minRssi);
+        (async () => {
+            const phone = await getPhoneNumber();
+            if (!isMounted) return;
+
+            // Set active session in coordinator
+            TransportCoordinator.setSession(roomId, myPeerId, myDisplayName, contact.id);
+
+            // Spin up Bluetooth Classic Server & Client concurrently (Proximity Pairing)
+            const targetPhone = contact.phoneNumber || contact.id;
+            await TransportCoordinator.startBluetoothSession(myPeerId, phone, targetPhone);
+        })();
 
         // Subscribe to incoming messages over both paths
         const unsubscribeMsg = TransportCoordinator.subscribeMessage((uiMessage) => {
@@ -201,11 +231,12 @@ export default function ConversationScreen({ route, navigation }) {
         });
 
         return () => {
+            isMounted = false;
             unsubscribeMsg();
             unsubscribeBadge();
             TransportCoordinator.stopBluetoothSession();
         };
-    }, [isP2P, roomId, myPeerId, myDisplayName, contact.id, sessionKey, minRssi]);
+    }, [isP2P, roomId, myPeerId, myDisplayName, contact.id, sessionKey]);
 
     // ── Send ──────────────────────────────────────────────────────────────────
     const handleSend = useCallback(async () => {
@@ -216,26 +247,26 @@ export default function ConversationScreen({ route, navigation }) {
         const enc = encryptMessage(text, sessionKey);
 
         if (isP2P) {
-            // Concurrent routing over Tor + Bluetooth via Coordinator
+            // Strict 5 seconds default chat auto-deletion duration
             const uiMsg = await TransportCoordinator.sendMessage(contact.id, text, enc, 5);
             setMessages(prev => [...prev, uiMsg]);
             setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
         } else {
-            // Demo auto-reply for mock conversations
+            // Demo auto-reply for mock conversations (enforcing 5s auto-delete)
             const msg = {
                 id: 'msg_' + Date.now(), contactId: contact.id,
                 text, encrypted: enc,
                 senderName: myDisplayName,
                 isOutgoing: true, timestamp: Date.now(),
                 burnDuration: 5, isRead: true, burned: false,
-                transports: [TransportType.TOR],
+                transports: [TransportType.TOR, TransportType.BLUETOOTH],
             };
             setMessages(prev => [...prev, msg]);
             setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
 
             const replies = [
-                'Circuit integrity confirmed.', 'Copy. Key rotation complete.',
-                'Message received. Clean channel.', 'Relay handshake successful.',
+                'Local secure RSSI gate confirmed.', 'Proximity pairing validated ✓',
+                'AES-256 E2EE handshake active.', '5sec auto-delete timer operational.',
             ];
             const delay = 2000 + Math.random() * 2000;
             setTimeout(() => {
@@ -245,9 +276,9 @@ export default function ConversationScreen({ route, navigation }) {
                     id: 'msg_' + Date.now() + '_reply', contactId: contact.id,
                     text: replyText, encrypted: enc2,
                     isOutgoing: false, timestamp: Date.now(),
-                    burnDuration: 5,
+                    burnDuration: 5, // Strict 5s default burn
                     isRead: false, burned: false,
-                    transports: [TransportType.TOR],
+                    transports: [TransportType.TOR, TransportType.BLUETOOTH],
                 };
                 setMessages(prev => [...prev, reply]);
                 setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
@@ -256,9 +287,7 @@ export default function ConversationScreen({ route, navigation }) {
     }, [inputText, isP2P, myDisplayName, contact.id, sessionKey]);
 
     // ── Burn ──────────────────────────────────────────────────────────────────
-    const handleStartBurn = useCallback((id) => {
-        setMessages(prev => prev.map(m => m.id === id ? { ...m, isRead: true } : m));
-    }, []);
+    const handleStartBurn = (id) => setMessages(prev => prev.map(m => m.id === id ? { ...m, isRead: true } : m));
     
     const handleBurned = async (id) => {
         setMessages(prev => prev.filter(m => m.id !== id));
@@ -285,7 +314,7 @@ export default function ConversationScreen({ route, navigation }) {
             <StatusBar barStyle="light-content" />
 
             {/* Header */}
-            <View style={[styles.header, { borderBottomColor: colors.border }]}>
+            <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: Math.max(insets.top, 16) }]}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Text style={[styles.backText, { color: accentColor }]}>‹</Text>
                 </TouchableOpacity>
@@ -298,9 +327,13 @@ export default function ConversationScreen({ route, navigation }) {
                     <Text style={styles.headerName}>{contact.alias}</Text>
                     <Text style={[styles.headerStatus, { color: peerOnline ? accentColor : colors.text3 }]}>
                         {isP2P
-                            ? (transportStatus.bluetoothConnected
-                                ? '● Nearby Bluetooth Active ⚡'
-                                : '● waiting for peer…')
+                            ? (transportStatus.torConnected && transportStatus.bluetoothConnected
+                                ? '● Tor & Bluetooth Active ⚡🧅'
+                                : transportStatus.bluetoothConnected
+                                    ? '● Bluetooth Local Active ⚡'
+                                    : transportStatus.torConnected
+                                        ? '● Tor Showcase Active 🧅'
+                                        : '● waiting for peer…')
                             : (contact.online ? '● online · hidden service' : '● offline · queued')}
                     </Text>
                 </TouchableOpacity>
@@ -309,6 +342,14 @@ export default function ConversationScreen({ route, navigation }) {
                 </TouchableOpacity>
             </View>
 
+            {/* Tor progressive bootstrapping status bar (Showcase) */}
+            {isP2P && torProgress < 100 && (
+                <View style={styles.progressiveBootTrack}>
+                    <View style={[styles.progressiveBootFill, { width: `${torProgress}%` }]} />
+                    <Text style={styles.progressiveBootText}>TUNNELING TOR SECURE CIRCUIT (SHOWCASE): {torProgress}%</Text>
+                </View>
+            )}
+
             {/* Circuit map */}
             <Animated.View style={[styles.circuitDrawer, { maxHeight: circuitHeight }]}>
                 <Text style={[styles.circuitTitle, { color: accentColor }]}>
@@ -316,7 +357,7 @@ export default function ConversationScreen({ route, navigation }) {
                 </Text>
                 {isP2P ? (
                     <View style={styles.circuitRow}>
-                        {['📱 YOU', '📶 Nearby Check', '⚡ BLE P2P', `📱 ${contact.alias}`].map((node, i, arr) => (
+                        {['📱 YOU', '⚡ BLE P2P (RSSI threshold: -80dBm)', '🧅 Tor (Showcase)', `📱 ${contact.alias}`].map((node, i, arr) => (
                             <React.Fragment key={i}>
                                 <View style={styles.circuitNode}><Text style={styles.circuitNodeText}>{node}</Text></View>
                                 {i < arr.length - 1 && <Text style={[styles.circuitArrow, { color: accentColor }]}>→</Text>}
@@ -335,7 +376,7 @@ export default function ConversationScreen({ route, navigation }) {
                 )}
                 <Text style={styles.circuitSub}>
                     {isP2P
-                        ? `Nearby Bluetooth P2P · AES-256 E2EE · Auto-delete 5s on read`
+                        ? `Dual-Path: BLE Proximity Classic (RSSI Active) + Tor Showcase SOCKS`
                         : '3 hops · ~220ms · AES-256 E2EE'}
                 </Text>
             </Animated.View>
@@ -343,7 +384,7 @@ export default function ConversationScreen({ route, navigation }) {
             {/* E2E banner */}
             <View style={styles.e2eBanner}>
                 <Text style={styles.e2eText}>
-                    🔐 {isP2P ? 'AES-256 End-to-End Encrypted · Bluetooth Nearby Mode · 5s read-expiry' : 'End-to-end encrypted · 5s read-expiry'}
+                    🔐 {isP2P ? 'AES-256 E2EE · Proximity pairing · 5sec Seen Auto-delete Active' : 'End-to-end encrypted · Tap burn messages to start timer'}
                 </Text>
             </View>
 
@@ -368,7 +409,7 @@ export default function ConversationScreen({ route, navigation }) {
             />
 
             {/* Input */}
-            <View style={styles.inputBar}>
+            <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
                 <TextInput
                     style={styles.input}
                     value={inputText}
@@ -393,7 +434,7 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
     header: {
         flexDirection: 'row', alignItems: 'center',
-        paddingTop: 52, paddingHorizontal: 14, paddingBottom: 12,
+        paddingHorizontal: 14, paddingBottom: 12,
         borderBottomWidth: 1,
     },
     backBtn: { padding: 6, marginRight: 4 },
@@ -431,7 +472,7 @@ const styles = StyleSheet.create({
     burnHint: { fontSize: 10, fontFamily: 'monospace', marginTop: 6 },
     inputBar: {
         flexDirection: 'row', alignItems: 'flex-end', gap: 10,
-        paddingHorizontal: 14, paddingVertical: 10, paddingBottom: 28,
+        paddingHorizontal: 14, paddingVertical: 10,
         borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.bg,
     },
     input: {

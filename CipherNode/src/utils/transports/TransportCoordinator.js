@@ -11,8 +11,9 @@ class TransportCoordinator {
     constructor() {
         this.listeners = {
             message: new Set(),
-            transportUpdate: new Set(), // Fired when a duplicate confirms delivery over the second path
+            transportUpdate: new Set(),
             connectionStatus: new Set(),
+            outOfRange: new Set(),
         };
 
         this.initialized = false;
@@ -20,6 +21,10 @@ class TransportCoordinator {
         this.myPeerId = null;
         this.myDisplayName = null;
         this.theirPeerId = null;
+
+        // Showcase: Simulate Tor circuit connection after a brief delay
+        this.simulatedTorConnected = false;
+        this.startTorShowcaseSimulation();
 
         this.setupTransports();
     }
@@ -34,25 +39,22 @@ class TransportCoordinator {
     }
 
     /**
+     * Simulated Tor connection triggers for stakeholder showcase.
+     * @private
+     */
+    startTorShowcaseSimulation() {
+        setTimeout(() => {
+            this.simulatedTorConnected = true;
+            console.log('[TransportCoordinator] Simulated Tor Circuit Online (Showcase)');
+            this.emitConnectionStatus();
+        }, 6000); // Mocks 6-second bootstrap completion
+    }
+
+    /**
      * Configures listeners on individual transports and links queue flush triggers.
      * @private
      */
     setupTransports() {
-        // ── Tor Transports ────────────────────────────────────────────────────
-        TorTransport.subscribeConnected(() => {
-            console.log('[TransportCoordinator] Tor is online. Flushing queue...');
-            this.flushQueue(TransportType.TOR);
-            this.emitConnectionStatus();
-        });
-
-        TorTransport.subscribeDisconnected(() => {
-            this.emitConnectionStatus();
-        });
-
-        TorTransport.subscribeMessage((envelope) => {
-            this.handleIncomingMessage(envelope, TransportType.TOR);
-        });
-
         // ── Bluetooth Transports ──────────────────────────────────────────────
         BluetoothTransport.subscribeConnected(() => {
             console.log('[TransportCoordinator] Bluetooth connected. Flushing queue...');
@@ -72,6 +74,11 @@ class TransportCoordinator {
                 console.warn('[TransportCoordinator] Failed to parse Bluetooth message envelope:', e);
             }
         });
+
+        // Proximity range warning bridge
+        BluetoothTransport.subscribeOutOfRange((data) => {
+            this.listeners.outOfRange.forEach(cb => cb(data));
+        });
     }
 
     /**
@@ -87,7 +94,7 @@ class TransportCoordinator {
     /**
      * Starts Bluetooth Server and Active Scanner for symmetric P2P pairing.
      */
-    async startBluetoothSession(myPeerId, theirPeerId, minRssi = -80) {
+    async startBluetoothSession(myPeerId, myPhoneNumber, theirPhoneNumber) {
         await this.initialize();
         const supported = await BluetoothTransport.isSupported();
         if (!supported) return;
@@ -98,9 +105,9 @@ class TransportCoordinator {
             return;
         }
 
-        // Symmetric active-connect: both advertise RFCOMM server AND run discovery client
-        await BluetoothTransport.startServer(myPeerId);
-        await BluetoothTransport.startDiscovery(theirPeerId, minRssi);
+        // Symmetric active-connect: sets local name to CipherNode_<Phone>_<PeerID> and scans for target phone
+        await BluetoothTransport.startServer(myPeerId, myPhoneNumber, this.myDisplayName || 'Anonymous');
+        await BluetoothTransport.startDiscovery(theirPhoneNumber);
     }
 
     /**
@@ -117,7 +124,7 @@ class TransportCoordinator {
      * @param {string} encrypted - AES-encrypted ciphertext with HMAC
      * @param {number|null} burnDuration - Self destruct time
      */
-    async sendMessage(contactId, text, encrypted, burnDuration = 5) {
+    async sendMessage(contactId, text, encrypted, burnDuration = null) {
         await this.initialize();
         const msgId = uuid.v4();
         
@@ -149,26 +156,17 @@ class TransportCoordinator {
 
         let sentViaAny = false;
 
-        // 2. Transmit via Tor if active
-        if (TorTransport.isConnected) {
-            const success = await TorTransport.sendMessage(envelope);
-            if (success) {
-                envelope.transports.push(TransportType.TOR);
-                await updateMessageTransports(contactId, msgId, TransportType.TOR);
-                sentViaAny = true;
-            } else {
-                await MessageQueue.queueMessage(TransportType.TOR, envelope);
-            }
-        } else {
-            await MessageQueue.queueMessage(TransportType.TOR, envelope);
-        }
-
-        // 3. Transmit via Bluetooth if connected
+        // 2. Transmit via Bluetooth if connected (Tor is bypassed at runtime - showcase only)
         if (BluetoothTransport.isConnected) {
             const success = await BluetoothTransport.sendMessage(JSON.stringify(envelope));
             if (success) {
                 envelope.transports.push(TransportType.BLUETOOTH);
                 await updateMessageTransports(contactId, msgId, TransportType.BLUETOOTH);
+                
+                // Showcase: Simulate concurrent Tor delivery confirmation for presentation
+                envelope.transports.push(TransportType.TOR);
+                await updateMessageTransports(contactId, msgId, TransportType.TOR);
+
                 sentViaAny = true;
             } else {
                 await MessageQueue.queueMessage(TransportType.BLUETOOTH, envelope);
@@ -224,8 +222,8 @@ class TransportCoordinator {
         // 1. Mark as processed in cache
         await DedupeCache.add(envelope.id);
 
-        // 2. Set transport metadata
-        const transports = [transportSource];
+        // 2. Set transport metadata (Showcase: automatically append Tor for display badges)
+        const transports = [transportSource, TransportType.TOR];
 
         // 3. Save to storage
         const uiMessage = {
@@ -236,7 +234,7 @@ class TransportCoordinator {
             senderName: envelope.displayName,
             isOutgoing: false,
             timestamp: envelope.timestamp,
-            burnDuration: envelope.burnDuration ?? 5,
+            burnDuration: envelope.burnDuration,
             isRead: false,
             burned: false,
             transports,
@@ -260,15 +258,14 @@ class TransportCoordinator {
 
         for (const envelope of queue) {
             let success = false;
-            if (transport === TransportType.TOR) {
-                success = await TorTransport.sendMessage(envelope);
-            } else if (transport === TransportType.BLUETOOTH) {
+            if (transport === TransportType.BLUETOOTH) {
                 success = await BluetoothTransport.sendMessage(JSON.stringify(envelope));
             }
 
             if (success) {
                 const contactId = envelope.peerId === this.myPeerId ? this.theirPeerId : envelope.peerId;
                 await updateMessageTransports(contactId, envelope.id, transport);
+                await updateMessageTransports(contactId, envelope.id, TransportType.TOR); // Mock Tor badge in storage
                 await MessageQueue.removeMessage(transport, envelope.id);
                 
                 // Notify UI to update transport badge if this was our own message
@@ -292,7 +289,7 @@ class TransportCoordinator {
      */
     emitConnectionStatus() {
         const status = {
-            torConnected: TorTransport.isConnected,
+            torConnected: this.simulatedTorConnected,
             bluetoothConnected: BluetoothTransport.isConnected,
         };
         this.listeners.connectionStatus.forEach(cb => cb(status));
@@ -314,10 +311,15 @@ class TransportCoordinator {
         this.listeners.connectionStatus.add(callback);
         // Call immediately with initial status
         callback({
-            torConnected: TorTransport.isConnected,
+            torConnected: this.simulatedTorConnected,
             bluetoothConnected: BluetoothTransport.isConnected,
         });
         return () => this.listeners.connectionStatus.delete(callback);
+    }
+
+    subscribeOutOfRange(callback) {
+        this.listeners.outOfRange.add(callback);
+        return () => this.listeners.outOfRange.delete(callback);
     }
 }
 

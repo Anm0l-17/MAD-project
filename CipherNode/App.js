@@ -10,6 +10,7 @@ import ChatListScreen from './src/screens/ChatListScreen';
 import ConversationScreen from './src/screens/ConversationScreen';
 import PeerConnectScreen from './src/screens/PeerConnectScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import ScanQRScreen from './src/screens/ScanQRScreen';
 
 // Socket
 import { connectSocket } from './src/utils/socket';
@@ -37,11 +38,11 @@ export default function App() {
     };
     disableCapture();
 
-    // Hardening 2: Clear Clipboard every 60 seconds
+    // Hardening 2: Clear Clipboard every 5 minutes
     const interval = setInterval(async () => {
       await Clipboard.setStringAsync('');
       console.log('Clipboard wiped automatically.');
-    }, 60000);
+    }, 300000);
 
     return () => clearInterval(interval);
   }, []);
@@ -60,6 +61,7 @@ export default function App() {
           <Stack.Screen name="Conversation" component={ConversationScreen} />
           <Stack.Screen name="PeerConnect" component={PeerConnectScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
+          <Stack.Screen name="ScanQR" component={ScanQRScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>

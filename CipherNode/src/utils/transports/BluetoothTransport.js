@@ -11,6 +11,8 @@ class BluetoothTransport {
             disconnected: new Set(),
             message: new Set(),
             discovery: new Set(),
+            outOfRange: new Set(),
+            deviceDiscovered: new Set(),
         };
 
         this.isConnected = false;
@@ -26,7 +28,7 @@ class BluetoothTransport {
         if (!bluetoothEmitter) return;
 
         bluetoothEmitter.addListener('onBluetoothPeerConnected', (data) => {
-            console.log('[BluetoothTransport] Peer connected natively:', data.peerName);
+            console.log('[BluetoothTransport] Peer connected natively:', data.peerName, 'peerId:', data.peerId);
             this.isConnected = true;
             this.listeners.connected.forEach(cb => cb(data));
         });
@@ -46,6 +48,16 @@ class BluetoothTransport {
             console.log('[BluetoothTransport] Discovery scanning status:', data.scanning);
             this.isScanning = data.scanning;
             this.listeners.discovery.forEach(cb => cb(data.scanning));
+        });
+
+        bluetoothEmitter.addListener('onBluetoothDeviceOutOfRange', (data) => {
+            console.log('[BluetoothTransport] Target device out of proximity range (RSSI:', data.rssi, ')');
+            this.listeners.outOfRange.forEach(cb => cb(data));
+        });
+
+        bluetoothEmitter.addListener('onBluetoothDeviceDiscovered', (data) => {
+            console.log('[BluetoothTransport] Found nearby CipherNode device:', data.displayName, 'Phone:', data.phoneNumber);
+            this.listeners.deviceDiscovered.forEach(cb => cb(data));
         });
     }
 
@@ -75,13 +87,15 @@ class BluetoothTransport {
 
     /**
      * Starts the Bluetooth server listening for connection from a specific room.
-     * @param {string} myPeerId - My Peer ID (will be set as Bluetooth local name)
+     * @param {string} myPeerId - My Peer ID
+     * @param {string} myPhoneNumber - My Phone Number
+     * @param {string} myDisplayName - My Display Name
      */
-    async startServer(myPeerId) {
+    async startServer(myPeerId, myPhoneNumber, myDisplayName = 'Anonymous') {
         if (Platform.OS !== 'android' || !BluetoothModule) return false;
         try {
-            console.log('[BluetoothTransport] Starting P2P RFCOMM Server for PeerId:', myPeerId);
-            return await BluetoothModule.startBluetoothServer(myPeerId);
+            console.log('[BluetoothTransport] Starting P2P RFCOMM Server for PeerId:', myPeerId, 'Phone:', myPhoneNumber, 'Name:', myDisplayName);
+            return await BluetoothModule.startBluetoothServer(myPeerId, myPhoneNumber, myDisplayName);
         } catch (e) {
             console.warn('[BluetoothTransport] Failed to start Bluetooth Server:', e.message);
             return false;
@@ -152,6 +166,16 @@ class BluetoothTransport {
     subscribeDiscovery(callback) {
         this.listeners.discovery.add(callback);
         return () => this.listeners.discovery.delete(callback);
+    }
+
+    subscribeOutOfRange(callback) {
+        this.listeners.outOfRange.add(callback);
+        return () => this.listeners.outOfRange.delete(callback);
+    }
+
+    subscribeDeviceDiscovered(callback) {
+        this.listeners.deviceDiscovered.add(callback);
+        return () => this.listeners.deviceDiscovered.delete(callback);
     }
 }
 
