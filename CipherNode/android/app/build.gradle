@@ -125,6 +125,7 @@ android {
         jniLibs {
             def enableLegacyPackaging = findProperty('expo.useLegacyPackaging') ?: 'false'
             useLegacyPackaging enableLegacyPackaging.toBoolean()
+            pickFirsts.add("**/libtor.so")
         }
     }
     androidResources {
@@ -155,8 +156,10 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
-    implementation("org.torproject:tor-android-binary:0.4.7.11")
-    implementation("org.torproject:tor-android:0.4.7.11")
+    implementation 'org.torproject:tor-android-binary:0.4.4.6'
+    implementation 'info.guardianproject:tor-android:0.4.7.11'
+    implementation 'info.guardianproject:jtorctl:0.4.5.7'
+
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
