@@ -16,6 +16,22 @@ export const encryptMessage = (message, key = SHARED_KEY) => {
     return `${ciphertext}|${mac}`;
 };
 
+// Constant-time string comparison to prevent timing-attack side-channels on HMAC tags.
+// Processes every character regardless of any mismatch (length or value) to avoid
+// leaking information through execution time.
+function timingSafeEqual(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    const len = Math.max(a.length, b.length);
+    // Seed diff with the length delta so different-length strings never compare equal.
+    let diff = a.length ^ b.length;
+    for (let i = 0; i < len; i++) {
+        // charCodeAt returns NaN for out-of-bounds indices; the `|| 0` coerces
+        // NaN to 0 so the loop runs to completion without an early exit.
+        diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+    }
+    return diff === 0;
+}
+
 export const decryptMessage = (encryptedStr, key = SHARED_KEY) => {
     try {
         if (!encryptedStr) return '';
@@ -23,8 +39,8 @@ export const decryptMessage = (encryptedStr, key = SHARED_KEY) => {
             const [ciphertext, mac] = encryptedStr.split('|');
             const expectedMac = CryptoJS.HmacSHA256(ciphertext, key).toString();
             
-            // Constant-time-like comparison to mitigate timing attacks
-            if (mac !== expectedMac) {
+            // Constant-time comparison to mitigate timing attacks
+            if (!timingSafeEqual(mac, expectedMac)) {
                 console.warn('[Security] HMAC verification failed! Message tampered.');
                 return '[Decryption failed: Integrity violation]';
             }
